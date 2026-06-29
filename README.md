@@ -4,11 +4,9 @@
 
 基于 [m365-copilot-openai-proxy](https://github.com/kuchris/m365-copilot-openai-proxy)，封装为 Docker 镜像，支持：
 
-- Chromium headless 自动刷新 Token（Cookie 登录后全自动）
-- Tampermonkey 油猴脚本一键推送 Token + Cookie
-- 多架构镜像 (amd64 + arm64)
+- 自动刷新 Token
+- 一键推送 Token + Cookie
 - API Key 认证保护
-- CORS 跨域支持
 - Web 管理页面
 
 ## 快速部署
@@ -25,28 +23,30 @@ cp .env.example .env
 docker-compose up -d
 ```
 
-服务在 `http://localhost:8000` 启动，打开浏览器访问即为 Web 管理页面。
+服务在 `http://localhost:8000` 启动，打开浏览器访问即为 Web 管理页面。首次访问需输入管理密码（默认为 API Key 值）。
 
 ### 3. 推送 Token
 
-#### 方式一：油猴脚本（推荐）
+#### 方式一：一键推送（推荐）
 
-1. 安装 [Tampermonkey BATE](https://www.tampermonkey.net/) 浏览器扩展
-2. 点击 Tampermonkey BATE 图标 → **添加新脚本**
-3. 将 [get_token.js](https://raw.githubusercontent.com/MurasameCyan/M365-Copilot-OpenAI-Proxy/main/get_token.js) 的内容粘贴进去，保存
-4. 打开 [M365 Copilot](https://m365.cloud.microsoft/chat) 并登录你的 M365 账号
+1. 安装 [Tampermonkey BETA](https://www.tampermonkey.net/) 浏览器扩展
+2. 点击 Tampermonkey BETA 图标 → **添加新脚本**
+3. 将 [get_token.js](https://raw.githubusercontent.com/MurasameCyan/ciallo-ms365-openai-proxy/main/docker/get_token.js) 的内容粘贴进去，保存
+4. 打开 [M365 Copilot](https://m365.cloud.microsoft/chat) 并登录你的账号
 5. 在 Copilot 对话框中**输入任意字符**触发 WebSocket 连接
 6. 页面右上角弹出 Token 提取面板
 7. 点击 **One-Click Setup** — 自动推送 Cookie + Token 到代理服务
 
-> **首次需要先推送 Cookie** 让 Chromium headless 登录 M365，之后 Auto Capture 即可自动刷新 Token。
+> **首次需要先推送 Cookie** 让 Chromium 登录 M365，之后 Auto Capture 即可自动刷新 Token。
 
-#### 方式二：手动粘贴
+#### 方式二：手动导入
 
 1. 在浏览器中打开 M365 Copilot
 2. F12 → Network → WS → 找到 `wss://substrate.office.com/...` 连接
 3. 复制 URL 中的 `access_token` 参数值
 4. 粘贴到 Web 管理页面的 **Update Token** 输入框，点击 **Update Token**
+
+> **手动导入不支持自动刷新 Token 功能**
 
 #### 查看状态
 
@@ -62,6 +62,7 @@ Web 管理页面显示 Token 有效性和 Chromium 登录状态。点击 **Check
 | `POST /v1/token/auto-capture`   | 触发 Chromium 自动捕获 Token        |
 | `POST /v1/cookie/inject`        | 注入 Cookie 到 Chromium             |
 | `GET /v1/chromium/login-status` | Chromium 登录状态                   |
+| `POST /admin/login`             | Web 管理页面登录                    |
 | `GET /v1/models`                | 模型列表                            |
 | `POST /v1/chat/completions`     | OpenAI Chat Completions（支持流式） |
 | `POST /v1/responses`            | OpenAI Responses API（支持流式）    |
@@ -74,25 +75,25 @@ Web 管理页面显示 Token 有效性和 Chromium 登录状态。点击 **Check
 | `M365_ACCESS_TOKEN`      | 否   | —                  | Substrate Token，留空则由 Chromium 自动捕获 |
 | `M365_TIME_ZONE`         | 否   | `Asia/Shanghai`   | 发送给 Copilot 的时区                       |
 | `M365_MODEL_ALIAS`       | 否   | `m365-copilot`    | 模型名称                                    |
-| `API_KEY`                | 否   | `ciallo-0d000721` | API Key 认证密钥，留空则不启用认证          |
+| `API_KEY`                | 否   | `ciallo` | API Key 认证密钥，同时作为 Web 管理密码     |
 | `AUTO_REFRESH`           | 否   | `true`            | 是否自动刷新 Token                          |
 | `REFRESH_BEFORE_SECONDS` | 否   | `300`             | Token 过期前多少秒开始刷新                  |
 | `CHROME_CDP_PORT`        | 否   | `9222`            | Chromium CDP 端口                           |
 
 ## 客户端配置
 
-| 设置             | 值                                                |
-| ---------------- | ------------------------------------------------- |
-| Base URL         | `http://your-server:8000/v1`                    |
-| API Key          | 你设置的 `API_KEY` 值（如未设置则填 `dummy`） |
-| Model            | `m365-copilot`                                  |
-| Persistent model | `m365-copilot:persist`                          |
+| 设置             | 值                                                  |
+| ---------------- | --------------------------------------------------- |
+| Base URL         | `http://your-server:8000/v1`                      |
+| API Key          | 你设置的 `API_KEY` 值（默认 `ciallo`） |
+| Model            | `m365-copilot`                                    |
+| Persistent model | `m365-copilot:persist`                            |
 
 ### Claude Code
 
 ```bash
 export ANTHROPIC_BASE_URL=http://your-server:8000
-export ANTHROPIC_API_KEY=your-api-key   # 如未设置 API_KEY 则填 dummy
+export ANTHROPIC_API_KEY=ciallo
 claude
 ```
 
@@ -100,17 +101,23 @@ claude
 
 ```
 Base URL: http://your-server:8000/v1
-API Key: your-api-key    # 默认 ciallo-0d000721
+API Key: ciallo
 Model: m365-copilot
 ```
 
-## API Key 认证
+## 认证
 
-默认 API Key 为 `ciallo-0d000721`。在 `.env` 中设置 `API_KEY=your-secret-key` 可修改。所有请求需携带 `Authorization: Bearer your-secret-key` 头。
+### API Key
+
+默认 API Key 为 `ciallo`。在 `.env` 中设置 `API_KEY=your-secret-key` 可修改。所有 API 请求需携带 `Authorization: Bearer your-key` 头。
 
 ```bash
-curl -H "Authorization: Bearer ciallo-0d000721" http://localhost:8000/v1/models
+curl -H "Authorization: Bearer ciallo" http://localhost:8000/v1/models
 ```
+
+### Web 管理页面
+
+访问 Web 管理页面时需输入管理密码，密码即 `API_KEY` 值。登录后 Cookie 有效期 7 天。
 
 ## 持久会话
 
@@ -128,12 +135,10 @@ curl -H "Authorization: Bearer ciallo-0d000721" http://localhost:8000/v1/models
   │   └─ 通过 CDP 自动捕获 Substrate WebSocket Token
   │
   └─ ciallo-ms365-proxy serve (端口 8000)
-      ├─ Web 管理页面 (/)
+      ├─ Web 管理页面 (/) — 密码保护
       ├─ Token 过期前 5 分钟自动刷新
       └─ 提供 OpenAI 兼容 API
 ```
-
-## Web页面![1782737377314](image/README/1782737377314.png)
 
 ## License
 
