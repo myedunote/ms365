@@ -603,6 +603,21 @@ POST /v1/messages
 </div>
 </div>
 
+<div class="card">
+<h2>Cookie Login</h2>
+<p style="color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:.75rem">
+Inject M365 authentication cookies (including httpOnly) into Chromium to enable auto-refresh.<br>
+<strong style="color:#22c55e">Best:</strong> Use Tampermonkey script's <strong>Push Cookies</strong> button (uses GM_cookie API, includes httpOnly).<br>
+<strong style="color:#f59e0b">Manual:</strong> Use browser extensions like <a href="https://chromewebstore.google.com/detail/editthiscookie/fngmhnnpilhplaeedifhccceomclgfbg" target="_blank">EditThisCookie</a> to export cookies, then paste below.
+</p>
+<textarea id="cookie-input" placeholder='Paste cookies JSON here, e.g.:&#10;{&#10;  "cookies": [&#10;    {"name": "ESTSAUTH", "value": "...", "domain": ".microsoft.com", "httpOnly": true},&#10;    ...&#10;  ]&#10;}' style="height:100px"></textarea>
+<div style="display:flex;gap:.75rem;margin-bottom:.25rem">
+<button id="btn-inject" onclick="injectCookies()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">Inject Cookies</button>
+<button id="btn-check-login" onclick="checkLogin()" style="background:linear-gradient(135deg,#f59e0b,#d97706)">Check Login</button>
+</div>
+<div id="cookie-msg" class="msg"></div>
+</div>
+
 <script>
 async function loadStatus(){
   try{
@@ -686,6 +701,37 @@ async function autoCapture(){
     }
   }catch(e){msg.className='msg err';msg.textContent='Network error: '+e}
   finally{btn.disabled=false;upd.disabled=false;btn.textContent='Auto Capture'}
+}
+
+async function injectCookies(){
+  const msg=document.getElementById('cookie-msg');
+  const btn=document.getElementById('btn-inject');
+  const input=document.getElementById('cookie-input').value.trim();
+  if(!input){msg.className='msg err';msg.textContent='Please paste cookies JSON first';return}
+  let data;
+  try{data=JSON.parse(input)}catch(e){msg.className='msg err';msg.textContent='Invalid JSON format';return}
+  if(!data.cookies||!Array.isArray(data.cookies)){msg.className='msg err';msg.textContent='JSON must have a "cookies" array';return}
+  btn.disabled=true;btn.textContent='Injecting...';msg.className='msg';msg.textContent='';
+  try{
+    const r=await fetch('/v1/cookie/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    const d=await r.json();
+    if(r.ok){msg.className='msg ok';msg.textContent=d.message+' (httpOnly: '+data.cookies.filter(c=>c.httpOnly).length+')';setTimeout(()=>{loadChromiumStatus()},5000)}
+    else{msg.className='msg err';msg.textContent=d.error||'Injection failed'}
+  }catch(e){msg.className='msg err';msg.textContent='Network error: '+e}
+  finally{btn.disabled=false;btn.textContent='Inject Cookies'}
+}
+
+async function checkLogin(){
+  loadChromiumStatus();
+  const msg=document.getElementById('cookie-msg');
+  msg.className='msg';msg.textContent='Checking...';
+  await new Promise(r=>setTimeout(r,1000));
+  try{
+    const r=await fetch('/v1/chromium/login-status');
+    const d=await r.json();
+    msg.className=d.logged_in?'msg ok':'msg err';
+    msg.textContent=d.logged_in?'Chromium is logged in! Auto-refresh is active.':'Not logged in yet. Make sure httpOnly cookies (ESTSAUTH, ESTSAUTHPERSISTENT) are included.';
+  }catch(e){msg.className='msg err';msg.textContent='Check failed: '+e}
 }
 
 loadStatus();

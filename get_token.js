@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         M365 Copilot Token & Cookie Extractor
 // @namespace    https://m365.cloud.microsoft
-// @version      3.1
-// @description  拦截 M365 Copilot Substrate WebSocket 连接，提取 access_token 并推送到代理服务
+// @version      4.0
+// @description  拦截 M365 Copilot Substrate WebSocket 连接，提取 access_token；通过 GM_cookie 获取完整 Cookie（含 httpOnly）推送到代理服务实现 Chromium 登录
 // @match        https://m365.cloud.microsoft/*
-// @grant        none
+// @grant        GM_cookie
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // ==/UserScript==
 
 (function() {
@@ -12,6 +14,14 @@
 
     const SUBSTRATE_WS_RE = /wss:\/\/substrate\.office\.com\/.*[?&]access_token=([^&]+)/;
     const PROXY_BASE = ''; // 留空则从面板输入框读取，或填入你的代理地址如 http://192.168.1.100:8000
+
+    // Domains whose cookies are needed for M365 login
+    const COOKIE_DOMAINS = [
+        'https://m365.cloud.microsoft',
+        'https://login.microsoftonline.com',
+        'https://microsoft.com',
+        'https://office.com',
+    ];
 
     // Store the latest token
     let latestToken = '';
@@ -32,25 +42,72 @@
     window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
     window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
 
-    // Get cookies that document.cookie can see (non-httpOnly only)
-    function getVisibleCookies() {
-        return document.cookie.split(';').map(c => {
-            const [name, ...rest] = c.trim().split('=');
-            return {
-                name,
-                value: rest.join('='),
-                domain: location.hostname,
-                path: '/',
-                secure: true,
-                httpOnly: false,
-                sameSite: 'None'
-            };
-        });
-    }
-
     function getProxyBase() {
         const input = document.getElementById('m365-proxy-url');
         return input ? input.value.trim().replace(/\/+$/, '') : PROXY_BASE;
+    }
+
+    // Cross-origin fetch via GM_xmlhttpRequest
+    function gmFetch(url, options) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: options.method || 'GET',
+                url: url,
+                headers: options.headers || {},
+                data: options.body || null,
+                responseType: 'json',
+                onload: (resp) => {
+                    resolve({
+                        ok: resp.status >= 200 && resp.status < 300,
+                        status: resp.status,
+                        json: () => Promise.resolve(resp.response || {}),
+                    });
+                },
+                onerror: (err) => reject(new Error('GM_xmlhttpRequest error: ' + err)),
+                ontimeout: () => reject(new Error('GM_xmlhttpRequest timeout')),
+            });
+        });
+    }
+
+    // Get ALL cookies (including httpOnly) via GM_cookie
+    async function getAllCookies() {
+        const allCookies = [];
+        const seen = new Set();
+
+        for (const url of COOKIE_DOMAINS) {
+            try {
+                const cookies = await new Promise((resolve, reject) => {
+                    GM_cookie.list({ url: url }, (cookies, error) => {
+                        if (error) reject(error);
+                        else resolve(cookies || []);
+                    });
+                });
+                for (const c of cookies) {
+                    const key = c.name + '@' + c.domain;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        allCookies.push({
+                            name: c.name || '',
+                            value: c.value || '',
+                            domain: c.domain || '',
+                            path: c.path || '/',
+                            secure: c.secure !== false,
+                            httpOnly: !!c.httpOnly,
+                            sameSite: (c.sameSite || '').charAt(0).toUpperCase() + (c.sameSite || '').slice(1).toLowerCase() || 'None',
+                            expires: c.expirationDate || undefined,
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn(`GM_cookie.list failed for ${url}:`, e);
+            }
+        }
+        return allCookies;
+    }
+
+    // Check if GM_cookie is available
+    function hasGMCookie() {
+        return typeof GM_cookie !== 'undefined' && typeof GM_cookie.list === 'function';
     }
 
     // Push Token to proxy
@@ -59,38 +116,46 @@
         if (!base) { alert('Please enter proxy URL first'); return; }
         if (!latestToken) { alert('No token captured yet. Type something in Copilot to trigger WebSocket.'); return; }
         try {
-            const r = await fetch(base + '/v1/token/update', {
+            const r = await gmFetch(base + '/v1/token/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token: latestToken })
             });
             const d = await r.json();
             alert(r.ok ? `Token pushed! Remaining: ${d.token_status?.seconds_remaining}s` : `Failed: ${d.error?.message || d.error}`);
-        } catch (e) { alert('Network error: ' + e + '\n\nMake sure the proxy server has CORS enabled and is reachable.'); }
+        } catch (e) { alert('Network error: ' + e); }
     }
 
-    // Push visible cookies to proxy (press button in panel)
+    // Push ALL cookies (including httpOnly) to proxy for Chromium login
     async function pushCookies() {
         const base = getProxyBase();
         if (!base) { alert('Please enter proxy URL first'); return; }
-        const cookies = getVisibleCookies();
-        if (!cookies.length) { alert('No cookies found on this page.'); return; }
+
+        if (!hasGMCookie()) {
+            alert('GM_cookie API not available.\n\nPlease use Tampermonkey Beta or enable "Allow scripts to access HttpOnly cookies" in Tampermonkey settings:\nSettings > Security > "Allow scripts to access cookies"');
+            return;
+        }
+
+        const btn = document.getElementById('m365-push-cookies');
+        if (btn) { btn.disabled = true; btn.textContent = 'Fetching...'; }
+
         try {
-            const r = await fetch(base + '/v1/cookie/inject', {
+            const cookies = await getAllCookies();
+            if (!cookies.length) { alert('No cookies found.'); return; }
+
+            if (btn) btn.textContent = 'Pushing...';
+            const r = await gmFetch(base + '/v1/cookie/inject', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cookies })
             });
             const d = await r.json();
-            alert(r.ok ? `Cookies pushed! ${d.message}` : `Failed: ${d.error?.message || d.error}`);
-        } catch (e) { alert('Network error: ' + e); }
-    }
-
-    // Copy visible cookies JSON
-    function copyCookies() {
-        const cookies = getVisibleCookies();
-        const data = JSON.stringify({ cookies }, null, 2);
-        navigator.clipboard.writeText(data).then(() => alert('Cookies JSON copied! (httpOnly cookies not included - use browser extension for those)')).catch(() => alert('Copy failed'));
+            alert(r.ok ? `Cookies pushed! ${d.message}\n(httpOnly included: ${cookies.filter(c => c.httpOnly).length})` : `Failed: ${d.error?.message || d.error}`);
+        } catch (e) {
+            alert('Error: ' + e);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Push Cookies'; }
+        }
     }
 
     // Copy token to clipboard
@@ -99,7 +164,7 @@
         navigator.clipboard.writeText(latestToken).then(() => alert('Token copied!')).catch(() => alert('Copy failed'));
     }
 
-    // One-click: push token then auto-capture (no cookie push - httpOnly cookies not accessible via document.cookie)
+    // One-click: push cookies first (to login Chromium), then push token
     async function oneClickSetup() {
         const base = getProxyBase();
         if (!base) { alert('Please enter proxy URL first'); return; }
@@ -110,26 +175,33 @@
         btn.disabled = true;
 
         try {
-            // Step 1: Push token
-            btn.textContent = 'Pushing token...';
-            const tr = await fetch(base + '/v1/token/update', {
+            // Step 1: Push cookies (if GM_cookie available) to login Chromium
+            if (hasGMCookie()) {
+                btn.textContent = '1/2 Pushing cookies...';
+                const cookies = await getAllCookies();
+                if (cookies.length) {
+                    await gmFetch(base + '/v1/cookie/inject', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cookies })
+                    });
+                    // Wait for Chromium to process cookies and reload
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
+
+            // Step 2: Push token
+            btn.textContent = '2/2 Pushing token...';
+            const r = await gmFetch(base + '/v1/token/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token: latestToken })
             });
-            const td = await tr.json();
-            if (!tr.ok) { alert('Token push failed: ' + (td.error?.message || td.error)); return; }
-
-            // Step 2: Auto-capture (optional, to sync Chromium state)
-            btn.textContent = 'Auto-capturing...';
-            await new Promise(r => setTimeout(r, 2000));
-            const cr = await fetch(base + '/v1/token/auto-capture', { method: 'POST' });
-            const cd = await cr.json();
-
-            if (cr.ok) {
-                alert(`Setup complete! Token remaining: ${cd.token_status?.seconds_remaining}s`);
+            const d = await r.json();
+            if (r.ok) {
+                alert(`Setup complete! Token remaining: ${d.token_status?.seconds_remaining}s\nProxy is ready to use.`);
             } else {
-                alert(`Token pushed OK (${td.token_status?.seconds_remaining}s remaining). Auto-capture skipped: ${cd.error?.message || cd.error}`);
+                alert('Token push failed: ' + (d.error?.message || d.error));
             }
         } catch (e) {
             alert('Error: ' + e);
@@ -143,6 +215,10 @@
         if (document.getElementById('m365-token-panel')) {
             document.getElementById('m365-token-panel').remove();
         }
+
+        const gmCookieNote = hasGMCookie()
+            ? '<span style="color:#22c55e">GM_cookie available - httpOnly cookies accessible</span>'
+            : '<span style="color:#f59e0b">GM_cookie not available. Install Tampermonkey Beta or enable httpOnly access in settings.</span>';
 
         const panel = document.createElement('div');
         panel.id = 'm365-token-panel';
@@ -185,26 +261,19 @@
                 </div>
 
                 <div style="border-top:1px solid #334155; margin:12px 0 10px; padding-top:10px;">
-                    <div style="font-size:11px; color:#8892b0; margin-bottom:6px;">Cookie Tools <span style="color:#f59e0b">NOTE: httpOnly cookies not accessible via document.cookie</span></div>
-                    <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                        <button id="m365-copy-cookies" style="padding:5px 12px; border:none;
-                                border-radius:6px; background:#f59e0b; color:#1a1a2e;
-                                cursor:pointer; font-weight:bold; font-size:12px;">
-                            Copy Cookies
-                        </button>
-                        <button id="m365-push-cookies" style="padding:5px 12px; border:none;
-                                border-radius:6px; background:#8b5cf6; color:#fff;
-                                cursor:pointer; font-weight:bold; font-size:12px;">
-                            Push Cookies
-                        </button>
-                    </div>
+                    <div style="font-size:11px; color:#8892b0; margin-bottom:6px;">Cookie Login <span style="font-size:10px">${gmCookieNote}</span></div>
+                    <button id="m365-push-cookies" style="padding:5px 12px; border:none;
+                            border-radius:6px; background:#8b5cf6; color:#fff;
+                            cursor:pointer; font-weight:bold; font-size:12px; width:100%;">
+                        Push All Cookies (incl. httpOnly)
+                    </button>
                 </div>
 
                 <div style="border-top:1px solid #334155; margin:12px 0 10px; padding-top:10px;">
                     <div style="font-size:11px; color:#22c55e; margin-bottom:6px; font-weight:bold;">Quick Setup</div>
-                    <div style="font-size:10px; color:#8892b0; margin-bottom:6px;">Push captured token to proxy then auto-capture</div>
+                    <div style="font-size:10px; color:#8892b0; margin-bottom:6px;">Push cookies + token to proxy for Chromium login and auto-refresh</div>
                     <button id="m365-one-click" style="padding:5px 12px; border:none;
-                            border-radius:6px; background:linear-gradient(135deg,#06b6d4,#22c55e); color:#fff;
+                            border-radius:6px; background:linear-gradient(135deg,#8b5cf6,#06b6d4,#22c55e); color:#fff;
                             cursor:pointer; font-weight:bold; font-size:12px; width:100%;">
                         One-Click Setup
                     </button>
@@ -223,7 +292,6 @@
 
         document.getElementById('m365-copy-token').onclick = () => copyToken();
         document.getElementById('m365-push-token').onclick = () => pushToken();
-        document.getElementById('m365-copy-cookies').onclick = () => copyCookies();
         document.getElementById('m365-push-cookies').onclick = () => pushCookies();
         document.getElementById('m365-one-click').onclick = () => oneClickSetup();
         document.getElementById('m365-close-panel').onclick = () => panel.remove();
