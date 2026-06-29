@@ -133,6 +133,8 @@ curl -H "Authorization: Bearer ciallo-0d000721" http://localhost:8000/v1/models
       └─ 提供 OpenAI 兼容 API
 ```
 
+## Web页面![1782737377314](image/README/1782737377314.png)
+
 ## License
 
 Apache License 2.0
