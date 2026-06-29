@@ -49,6 +49,10 @@ def create_app(
     async def api_key_auth(request: Request, call_next):
         if not resolved_settings.api_key:
             return await call_next(request)
+        # Skip auth for admin page and health endpoints
+        path = request.url.path
+        if path in ("/", "/healthz", "/v1/token/status", "/v1/token/update"):
+            return await call_next(request)
         auth = request.headers.get("Authorization", "")
         match = re.match(r"^Bearer\s+(.+)$", auth, re.IGNORECASE)
         if match and match.group(1) == resolved_settings.api_key:
