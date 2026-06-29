@@ -1,6 +1,6 @@
 services:
   ciallo-proxy:
-    image: ghcr.io/murasamecyan/ciallo-ms365-openai-proxy:latest
+    image: ghcr.io/murasamecyan/ciallo-ms-365-openai-proxy-docker:latest
     container_name: ciallo-ms365-proxy
     ports:
       - "8000:8000"
