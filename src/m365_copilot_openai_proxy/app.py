@@ -78,6 +78,23 @@ def create_app(
     def get_copilot_client() -> SubstrateCopilotClient:
         return app.state.copilot_client_factory()
 
+    # Global exception handler — always return JSON (never HTML error pages)
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(exc), "type": "internal_error"}},
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    def _json_err(status: int, message: str, error_type: str = "error") -> JSONResponse:
+        """Return a JSON error response with CORS headers."""
+        return JSONResponse(
+            status_code=status,
+            content={"error": {"message": message, "type": error_type}},
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
     @app.get("/healthz")
     async def healthz() -> dict:
         return {"status": "ok", "token": app.state.token_store.status()}
@@ -91,13 +108,13 @@ def create_app(
         body = await request.json()
         token = body.get("token", "").strip()
         if not token:
-            return JSONResponse(status_code=400, content={"error": "Token is empty"})
+            return _json_err(400, "Token is empty")
         # Extract token from full WebSocket URL if needed
         match = re.search(r"access_token=([^&\s]+)", token)
         if match:
             token = match.group(1)
         if not token.startswith("eyJ"):
-            return JSONResponse(status_code=400, content={"error": "Not a valid JWT token"})
+            return _json_err(400, "Not a valid JWT token")
         # Write to .env
         env_path = Path(".env")
         token_line_pattern = r"(?m)^M365_ACCESS_TOKEN=.*$"
@@ -125,9 +142,9 @@ def create_app(
         try:
             token = await _cdp_extract_token(cdp_port, allow_nudge=True)
         except Exception as exc:
-            return JSONResponse(status_code=502, content={"error": f"CDP capture failed: {exc}"})
+            return _json_err(502, f"CDP capture failed: {exc}")
         if not token:
-            return JSONResponse(status_code=404, content={"error": "No substrate token found. Make sure M365 Copilot is open and logged in in Chromium."})
+            return _json_err(404, "No substrate token found. Make sure M365 Copilot is open and logged in in Chromium.")
         # Write to .env and update in-memory
         _write_token(token)
         app.state.token_store._token = token
@@ -140,7 +157,7 @@ def create_app(
         body = await request.json()
         cookies = body.get("cookies", [])
         if not cookies:
-            return JSONResponse(status_code=400, content={"error": "No cookies provided"})
+            return _json_err(400, "No cookies provided")
         import asyncio as _async
         import httpx as _httpx
         import websockets as _ws
@@ -150,13 +167,13 @@ def create_app(
             async with _httpx.AsyncClient(timeout=3) as client:
                 tabs = (await client.get(f"http://localhost:{cdp_port}/json")).json()
         except Exception as exc:
-            return JSONResponse(status_code=502, content={"error": f"Cannot connect to Chromium CDP: {exc}"})
+            return _json_err(502, f"Cannot connect to Chromium CDP: {exc}")
 
         tab = next((t for t in tabs if t.get("type") == "page" and t.get("url", "").startswith("https://m365.cloud.microsoft/")), None)
         if not tab:
             tab = next((t for t in tabs if t.get("type") == "page"), None)
         if not tab:
-            return JSONResponse(status_code=404, content={"error": "No browser tab found in Chromium"})
+            return _json_err(404, "No browser tab found in Chromium")
 
         injected = 0
         try:
@@ -195,7 +212,7 @@ def create_app(
 
                 await ws.send(json.dumps({"id": 999, "method": "Page.reload"}))
         except Exception as exc:
-            return JSONResponse(status_code=502, content={"error": f"CDP cookie injection failed: {exc}"})
+            return _json_err(502, f"CDP cookie injection failed: {exc}")
 
         return {"status": "ok", "message": f"Injected {injected}/{len(cookies)} cookies. Page reloading.", "injected": injected, "total": len(cookies)}
 

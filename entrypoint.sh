@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 CDP_PORT="${CHROME_CDP_PORT:-9222}"
 CHROME_PROFILE="/chrome-profile"
@@ -34,19 +33,28 @@ if [ -n "$CHROME_BIN" ] && [ "$AUTO_REFRESH" = "true" ]; then
         --no-first-run \
         --disable-dev-shm-usage \
         --disable-software-rasterizer \
+        --disable-background-networking \
+        --disable-sync \
+        --no-default-browser-check \
         "https://m365.cloud.microsoft/chat" &
 
-    # Wait for Chrome to start
-    echo "Waiting for Chrome CDP on port $CDP_PORT ..."
+    CHROME_PID=$!
+    echo "Chromium started with PID $CHROME_PID"
+
+    # Wait for Chrome CDP to be ready
+    echo "Waiting for Chromium CDP on port $CDP_PORT ..."
     for i in $(seq 1 30); do
         if curl -s "http://localhost:$CDP_PORT/json" > /dev/null 2>&1; then
-            echo "Chrome CDP ready."
+            echo "Chromium CDP ready."
             break
+        fi
+        if [ $i -eq 30 ]; then
+            echo "WARNING: Chromium CDP did not become ready in 30s. Continuing without CDP."
         fi
         sleep 1
     done
 else
-    echo "Chrome headless not started. Token auto-refresh disabled."
+    echo "Chromium headless not started. Token auto-refresh disabled."
 fi
 
 # Build serve command arguments
