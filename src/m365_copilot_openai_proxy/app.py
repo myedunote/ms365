@@ -255,15 +255,15 @@ def create_app(
         logged_in = False
         page_title = tab.get("title", "")
         page_url = tab.get("url", "")
-        cookie_names = []
+        cookie_details = []
         try:
             async with _ws.connect(tab["webSocketDebuggerUrl"]) as ws:
                 # Get page cookies for M365 domain
-                await ws.send(json.dumps({"id": 1, "method": "Network.getCookies", "params": {"urls": ["https://m365.cloud.microsoft", "https://login.microsoftonline.com"]}}))
+                await ws.send(json.dumps({"id": 1, "method": "Network.getCookies", "params": {"urls": ["https://m365.cloud.microsoft", "https://login.microsoftonline.com", "https://microsoft.com", "https://office.com"]}}))
                 resp = await _async.wait_for(ws.recv(), timeout=5)
                 result = json.loads(resp)
                 cookies = result.get("result", {}).get("cookies", [])
-                cookie_names = [c.get("name", "") for c in cookies]
+                cookie_details = [{"name": c.get("name", ""), "domain": c.get("domain", ""), "httpOnly": c.get("httpOnly", False), "secure": c.get("secure", False)} for c in cookies]
                 # Check for authentication cookies
                 auth_cookie_names = {"SignInStateCookie", "ESTSAUTH", "ESTSAUTHPERSISTENT", "brcap", "MUID"}
                 found = any(c.get("name", "") in auth_cookie_names for c in cookies)
@@ -282,7 +282,7 @@ def create_app(
             "logged_in": logged_in,
             "url": page_url,
             "title": page_title,
-            "cookies": cookie_names,
+            "cookies": cookie_details,
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -663,7 +663,11 @@ async function loadChromiumStatus(){
     html+='<div class="status-row"><span class="status-label">Login</span><span class="status-value '+logCls+'">'+logText+'</span></div>';
     if(d.url)html+='<div class="status-row"><span class="status-label">Page</span><span class="status-value" style="font-size:.75rem;word-break:break-all">'+d.url+'</span></div>';
     if(d.title)html+='<div class="status-row"><span class="status-label">Title</span><span class="status-value" style="font-size:.75rem">'+d.title+'</span></div>';
-    if(d.cookies&&d.cookies.length)html+='<div class="status-row"><span class="status-label">Cookies</span><span class="status-value" style="font-size:.7rem;word-break:break-all">'+d.cookies.join(', ')+'</span></div>';
+    if(d.cookies&&d.cookies.length){
+      html+='<div class="status-row"><span class="status-label">Cookies</span><span class="status-value" style="font-size:.7rem;word-break:break-all">'+d.cookies.map(c=>c.name+(c.httpOnly?'*':'')+'@'+c.domain).join(', ')+'</span></div>';
+    }else{
+      html+='<div class="status-row"><span class="status-label">Cookies</span><span class="status-value" style="font-size:.75rem;color:#64748b">None found</span></div>';
+    }
     document.getElementById('chromium-status').innerHTML=html;
   }catch(e){
     document.getElementById('chromium-status').innerHTML='<span class="invalid">Failed to load</span>';
