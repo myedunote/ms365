@@ -627,7 +627,7 @@ async function doLogin(){
   const msg=document.getElementById('msg');
   btn.disabled=true;msg.className='msg';msg.textContent='';
   try{
-    const r=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    const r=await fetch('/admin/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
     const d=await r.json();
     if(r.ok){location.reload()}else{msg.className='msg err';msg.textContent=d.error?.message||'Login failed'}
   }catch(e){msg.className='msg err';msg.textContent='Network error'}
@@ -791,7 +791,7 @@ applyLang();
 
 async function loadStatus(){
   try{
-    const r=await fetch('/admin/token/status');
+    const r=await fetch('/admin/token/status',{credentials:'include'});
     const d=await r.json();
     const v=d.valid;
     const cls=v?'valid':'invalid';
@@ -810,7 +810,7 @@ async function loadStatus(){
 
 async function loadChromiumStatus(){
   try{
-    const r=await fetch('/admin/chromium/login-status');
+    const r=await fetch('/admin/chromium/login-status',{credentials:'include'});
     const d=await r.json();
     if(!d.chromium_running){
       document.getElementById('chromium-status').innerHTML='<div class="status-row"><span class="status-label">Chromium</span><span class="status-value invalid">'+t('chromium_not_running')+'</span></div>';
@@ -851,7 +851,7 @@ async function toggleAutoRefresh(){
   const btn=document.getElementById('btn-stop-refresh');
   btn.disabled=true;msg.className='msg';msg.textContent='';
   try{
-    const r=await fetch('/admin/token/auto-refresh-toggle',{method:'POST'});
+    const r=await fetch('/admin/token/auto-refresh-toggle',{method:'POST',credentials:'include'});
     const d=await r.json();
     if(r.ok){
       msg.className='msg ok';msg.textContent=d.auto_refresh?t('auto_refresh_started'):t('auto_refresh_stopped');
@@ -910,7 +910,7 @@ async function checkLogin(){
   msg.className='msg';msg.textContent=t('check_login');
   await new Promise(r=>setTimeout(r,1500));
   try{
-    const r=await fetch('/admin/chromium/login-status');
+    const r=await fetch('/admin/chromium/login-status',{credentials:'include'});
     const d=await r.json();
     msg.className=d.logged_in?'msg ok':'msg err';
     msg.textContent=d.logged_in?t('login_ok'):t('login_not_ok');
