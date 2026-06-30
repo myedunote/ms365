@@ -65,12 +65,17 @@
                 url: url,
                 headers: options.headers || {},
                 data: options.body || null,
-                responseType: 'json',
                 onload: (resp) => {
                     resolve({
                         ok: resp.status >= 200 && resp.status < 300,
                         status: resp.status,
-                        json: () => Promise.resolve(resp.response || {}),
+                        json: () => {
+                            // If responseType is 'json', resp.response is already parsed
+                            if (typeof resp.response === 'object' && resp.response !== null) {
+                                return Promise.resolve(resp.response);
+                            }
+                            return Promise.resolve(JSON.parse(resp.responseText || '{}'));
+                        },
                     });
                 },
                 onerror: (err) => reject(new Error('GM_xmlhttpRequest error: ' + err)),
