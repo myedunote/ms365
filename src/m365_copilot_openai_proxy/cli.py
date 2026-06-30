@@ -489,13 +489,7 @@ def serve_command(args: argparse.Namespace) -> None:
 
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
-        if not args.no_capture_on_start and _needs_substrate_token(_read_token()):
-            capture_thread = threading.Thread(
-                target=_startup_capture_loop,
-                args=(cdp_port, args.capture_timeout_seconds),
-                daemon=True,
-            )
-            capture_thread.start()
+        # On-demand mode: skip startup capture, token will be captured when /v1/ requests come in
         if not args.no_auto_refresh:
             auto_refresh_thread = threading.Thread(
                 target=_auto_refresh_loop,
@@ -512,8 +506,8 @@ def serve_command(args: argparse.Namespace) -> None:
 
         while not server.started and thread.is_alive():
             time.sleep(0.05)
-        auto_refresh_label = "off" if args.no_auto_refresh else "on"
-        capture_label = "off" if args.no_capture_on_start else "on"
+        auto_refresh_label = "off" if args.no_auto_refresh else "on-demand"
+        capture_label = "off" if getattr(args, 'no_capture_on_start', True) else "on"
         print(
             f"\n  [q] quit    [r] refresh token"
             f"    auto-refresh: {auto_refresh_label}"
