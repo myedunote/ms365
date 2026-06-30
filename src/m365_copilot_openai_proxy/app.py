@@ -333,7 +333,7 @@ def create_app(
         password = body.get("password", "")
         if password == resolved_settings.api_key:
             resp = JSONResponse({"status": "ok"})
-            resp.set_cookie("admin_auth", _admin_cookie_hash(), max_age=86400 * 7, httponly=True, samesite="lax")
+            resp.set_cookie("admin_auth", _admin_cookie_hash(), max_age=86400 * 7, httponly=True, samesite="lax", path="/")
             return resp
         return JSONResponse({"error": {"message": "Wrong password", "type": "auth_error"}}, status_code=401)
 
