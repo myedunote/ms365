@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         M365 Copilot Token & Cookie Extractor
+// @name         Ciallo Ms-365 Proxy
 // @namespace    https://m365.cloud.microsoft
 // @version      5.0
 // @description  提取 M365 Copilot 完整 Cookie（含 httpOnly）推送到代理服务实现登录
@@ -54,11 +54,11 @@
             gm_available: '✓ GM_cookie 可用',
             gm_unavailable: '⚠ GM_cookie 不可用，请使用 Tampermonkey Beta。',
             push_cookies: '推送全部 Cookie',
-            quick_setup: '一键配置',
+            quick_setup: ' 一键配置',
             quick_setup_desc: '推送 Cookie + Token 到代理，用于 Chromium 登录和自动刷新',
-            one_click: '一键配置',
-            manual_config: '手动配置',
-            mode_capture: '模式抓包',
+            one_click: '推送配置',
+            manual_config: ' 手动配置',
+            mode_capture: ' 模式抓包',
             click_expand: '（点击展开）',
             mode_capture_desc: '在 Copilot 切换模式（快速/深度、GPT 5.5/5.2）并发送一条消息。下方会显示 payload 字段，推送到代理可对比哪个字段控制模式。',
             no_capture: '暂无抓包数据。选择模式并发送一条消息。',
@@ -142,6 +142,22 @@
         },
     };
     function tr(key) { return (I18N[lang] && I18N[lang][key]) || (I18N.en[key]) || key; }
+
+    // Colored inline-SVG icons (fixed 18px box so titles align regardless of glyph width)
+    function ic(name) {
+        const svgs = {
+            // lightning bolt — Quick Setup (amber)
+            bolt: '<svg viewBox="0 0 24 24" width="15" height="15" fill="#f59e0b"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>',
+            // gear — Manual Config (slate blue)
+            gear: '<svg viewBox="0 0 24 24" width="15" height="15" fill="#38bdf8"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4a7 7 0 00-.1-1.2l2-1.6-2-3.5-2.4 1a7 7 0 00-2-1.2l-.4-2.5H9.9l-.4 2.5a7 7 0 00-2 1.2l-2.4-1-2 3.5 2 1.6A7 7 0 003 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.5 2.4-1a7 7 0 002 1.2l.4 2.5h4.2l.4-2.5a7 7 0 002-1.2l2.4 1 2-3.5-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>',
+            // crosshair/aperture — Mode Capture (green)
+            scope: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#22c55e" stroke-width="2"><circle cx="12" cy="12" r="8"/><line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/><circle cx="12" cy="12" r="2" fill="#22c55e" stroke="none"/></svg>',
+            // sparkle/rocket — panel title (sky)
+            spark: '<svg viewBox="0 0 24 24" width="17" height="17" fill="#38bdf8"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2z"/></svg>',
+        };
+        return '<span style="display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; vertical-align:middle;">' + (svgs[name] || '') + '</span>';
+    }
+
     function toggleLang() {
         lang = (lang === 'zh') ? 'en' : 'zh';
         try { localStorage.setItem('m365-panel-lang', lang); } catch (e) {}
@@ -522,7 +538,7 @@
                         backdrop-filter:blur(12px);">
                 <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:#38bdf8;
                             letter-spacing:0.5px; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:18px">&#9889;</span> ${tr('title')}
+                    ${ic('spark')} ${tr('title')}
                     <button id="m365-lang-toggle" style="margin-left:auto; padding:3px 12px; border:1px solid #334155;
                             border-radius:8px; background:transparent; color:#38bdf8; cursor:pointer;
                             font-weight:600; font-size:11px; transition:all 0.2s;"
@@ -542,7 +558,7 @@
                 </div>
 
                 <div style="border-top:1px solid #1e293b; margin:0 0 12px; padding-top:12px;">
-                    <div style="font-size:12px; color:#38bdf8; font-weight:700; margin-bottom:8px;">&#9889; ${tr('quick_setup')}</div>
+                    <div style="font-size:12px; color:#38bdf8; font-weight:700; margin-bottom:8px;">${ic('bolt')}${tr('quick_setup')}</div>
                     <div style="font-size:10px; color:#64748b; margin-bottom:8px;">${tr('quick_setup_desc')}</div>
                     <button id="m365-one-click" style="width:100%; padding:10px 0; border:none;
                             border-radius:8px; background:linear-gradient(135deg,#8b5cf6,#06b6d4,#22c55e); color:#fff;
@@ -553,7 +569,7 @@
                 </div>
 
                 <details style="border-top:1px solid #1e293b; margin:0 0 12px; padding-top:12px;">
-                    <summary style="font-size:12px; color:#38bdf8; font-weight:700; cursor:pointer; list-style:none; outline:none;">&#9881; ${tr('manual_config')} <span style="color:#475569; font-weight:400;">${tr('click_expand')}</span></summary>
+                    <summary style="font-size:12px; color:#38bdf8; font-weight:700; cursor:pointer; list-style:none; outline:none;">${ic('gear')}${tr('manual_config')} <span style="color:#475569; font-weight:400;">${tr('click_expand')}</span></summary>
 
                     <div style="font-size:11px; color:#94a3b8; margin:10px 0 5px; font-weight:500;">${tr('token')} ${latestToken ? '<span style="color:#22c55e">' + tr('token_captured') + '</span>' : '<span style="color:#f59e0b">' + tr('token_not_captured') + '</span>'}</div>
                     <div style="display:flex; gap:8px;">
@@ -581,7 +597,7 @@
                 </details>
 
                 <details style="border-top:1px solid #1e293b; margin:0 0 12px; padding-top:12px;">
-                    <summary style="font-size:12px; color:#38bdf8; font-weight:700; cursor:pointer; list-style:none; outline:none;">&#128269; ${tr('mode_capture')} <span style="color:#475569; font-weight:400;">${tr('click_expand')}</span></summary>
+                    <summary style="font-size:12px; color:#38bdf8; font-weight:700; cursor:pointer; list-style:none; outline:none;">${ic('scope')}${tr('mode_capture')} <span style="color:#475569; font-weight:400;">${tr('click_expand')}</span></summary>
                     <div style="font-size:10px; color:#64748b; margin:8px 0;">${tr('mode_capture_desc')}</div>
                     <div id="m365-captured" style="background:#0f172a; padding:8px 12px; border-radius:8px; border:1px solid #334155; max-height:160px; overflow-y:auto; margin-bottom:8px;">
                         <span style="color:#475569">${tr('no_capture')}</span>
