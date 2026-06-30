@@ -371,20 +371,37 @@ def create_app(
                     logged_in = True
                 else:
                     logged_in = False
-                # Extract username from page JS (try displayName, then upn from sessionStorage)
+                # Extract username from page JS (try multiple sources)
                 if logged_in:
                     try:
                         _USER_JS = """(() => {
-                            try { const s = sessionStorage.getItem('ms-m365-shell-session-data'); if (s) { const d = JSON.parse(s); if (d && d.userDisplayName) return d.userDisplayName; if (d && d.upn) return d.upn; } } catch {}
-                            try { const info = document.querySelector('[data-testid="header-person-menu"] span, [aria-label*="Account"] span, button[data-testid="persona"] span'); if (info && info.textContent) return info.textContent.trim(); } catch {}
+                            try { const s = sessionStorage.getItem('ms-m365-shell-session-data'); if (s) { const d = JSON.parse(s); if (d && d.userDisplayName) return d.userDisplayName; if (d && d.upn) return d.upn.split('@')[0]; } } catch {}
+                            try {
+                                const els = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], [aria-label*="Account"], [aria-label*="Profiles"], .ms-Icon--People, button[title*="Account"], span[id*="person"]');
+                                for (const el of els) { const t = el.textContent.trim(); if (t && t.length > 0 && t.length < 80) return t; }
+                            } catch {}
+                            try {
+                                const profile = document.querySelector('div[class*="persona"] span, div[class*="UserProfile"] span, img[alt]'); if (profile) { const a = profile.getAttribute('alt') || profile.textContent; if (a && a.trim()) return a.trim(); } } catch {}
                             return null;
                         })()"""
-                        await ws.send(json.dumps({"id": 2, "method": "Runtime.evaluate", "params": {"expression": _USER_JS}}))
-                        name_resp = await _async.wait_for(ws.recv(), timeout=3)
-                        name_result = json.loads(name_resp)
-                        name_val = name_result.get("result", {}).get("result", {}).get("value")
-                        if name_val and isinstance(name_val, str):
-                            username = name_val.strip()
+                        next_id = 2
+                        # Drain any pending CDP messages before sending
+                        while True:
+                            try:
+                                await _async.wait_for(ws.recv(), timeout=0.1)
+                            except (_async.TimeoutError, Exception):
+                                break
+                        await ws.send(json.dumps({"id": next_id, "method": "Runtime.evaluate", "params": {"expression": _USER_JS}}))
+                        # Wait for the specific response by id
+                        deadline = _async.get_event_loop().time() + 3
+                        while _async.get_event_loop().time() < deadline:
+                            raw_msg = await _async.wait_for(ws.recv(), timeout=2)
+                            msg = json.loads(raw_msg)
+                            if msg.get("id") == next_id:
+                                name_val = msg.get("result", {}).get("result", {}).get("value")
+                                if name_val and isinstance(name_val, str):
+                                    username = name_val.strip()
+                                break
                     except Exception:
                         pass
         except Exception:
@@ -1008,7 +1025,7 @@ async function loadChromiumStatus(){
       return;
     }
     const logCls=d.logged_in?'valid':('warn');
-    const logText=d.logged_in?('('+((d.username||'')?d.username:'')+') '+t('logged_in')):t('not_logged_in');
+    const logText=d.logged_in?(d.username?('('+d.username+') '):'')+t('logged_in'):t('not_logged_in');
     let html='<div class="status-row"><span class="status-label">'+t('login')+'</span><span class="status-value '+logCls+'">'+logText+'</span></div>';
     // Show/hide logout button based on login status
     const logoutBtn=document.getElementById('btn-logout');
