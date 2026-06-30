@@ -736,6 +736,8 @@ def create_app(
             _log.info("  parsed tool_calls: %s", [tc["function"]["name"] for tc in tool_calls])
         # Save call record
         call_record["response_len"] = len(text)
+        call_record["response_text"] = text[:8000]
+        call_record["response_repr"] = repr(text[:2000])
         call_record["tool_calls_result"] = [tc["function"]["name"] for tc in tool_calls] if tool_calls else []
         app.state.call_log.append(call_record)
         if len(app.state.call_log) > 100:
@@ -929,6 +931,8 @@ async def _openai_stream_with_tools(
     # Update call record with results
     if call_record is not None:
         call_record["response_len"] = len(full_text)
+        call_record["response_text"] = full_text[:8000]
+        call_record["response_repr"] = repr(full_text[:2000])
         call_record["tool_calls_result"] = [tc["function"]["name"] for tc in tool_calls] if tool_calls else []
     completion_id = f"chatcmpl_{uuid.uuid4().hex}"
     created = int(time.time())
@@ -1199,6 +1203,7 @@ const i18n={
     click_expand:'点击展开',
     no_calls_yet:'暂无调用记录',
     tool_calls_parsed:'解析出工具调用',
+    view_raw:'查看原文',
   },
   en:{
     title_update_token:'Update Token',btn_update:'Update Token',btn_check_login:'Check Login',btn_auto_capture:'Auto Capture',
@@ -1226,6 +1231,7 @@ const i18n={
     click_expand:'Click to expand',
     no_calls_yet:'No calls yet',
     tool_calls_parsed:'Parsed tool calls',
+    view_raw:'View raw',
   }
 };
 let lang=localStorage.getItem('lang')||'zh';
@@ -1473,15 +1479,22 @@ async function loadCallLog(){
     let html='';
     for(let i=logs.length-1;i>=0;i--){
       const l=logs[i];
+      const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const tc=l.tools&&l.tools.length?l.tools.join(', '):'—';
       const tr=l.tool_calls_result&&l.tool_calls_result.length?
         '<span style="color:#22c55e">'+t('tool_calls_parsed')+': '+l.tool_calls_result.join(', ')+'</span>':'';
+      const respView=(l.response_repr||l.response_text)?
+        '<details style="margin-top:4px"><summary style="cursor:pointer;color:#64748b;font-size:.75rem;list-style:none">'+t('view_raw')+'</summary>'+
+        (l.response_repr?'<div style="color:#475569;margin-top:4px;font-size:.7rem">repr:</div><pre style="white-space:pre-wrap;word-break:break-all;background:#0f172a;padding:6px;border-radius:6px;color:#94a3b8;margin-top:2px;font-size:.7rem;max-height:200px;overflow:auto">'+esc(l.response_repr)+'</pre>':'')+
+        (l.response_text?'<div style="color:#475569;margin-top:4px;font-size:.7rem">text:</div><pre style="white-space:pre-wrap;word-break:break-all;background:#0f172a;padding:6px;border-radius:6px;color:#e2e8f0;margin-top:2px;font-size:.7rem;max-height:300px;overflow:auto">'+esc(l.response_text)+'</pre>':'')+
+        '</details>':'';
       html+='<div style="border-bottom:1px solid #1e293b;padding:6px 0">'+
         '<div style="display:flex;justify-content:space-between;color:#94a3b8">'+
         '<span>'+l.time+'</span><span style="color:#475569">'+(l.stream?'stream':'sync')+'</span></div>'+
         '<div style="color:#e2e8f0;margin-top:2px">tools: <span style="color:#38bdf8">'+tc+'</span></div>'+
         (tr?'<div style="margin-top:2px">'+tr+'</div>':'')+
         (l.response_len?'<div style="color:#475569;margin-top:2px">resp: '+l.response_len+' chars</div>':'')+
+        respView+
         '</div>';
     }
     el.innerHTML=html;
