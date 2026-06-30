@@ -32,8 +32,7 @@ RUN chmod +x /entrypoint.sh
 # Persist Chrome user data (login state)
 VOLUME /chrome-profile
 
-# Environment variables
-ENV M365_ACCESS_TOKEN=""
+# Environment variables (do NOT set M365_ACCESS_TOKEN here — it may leak into image layers)
 ENV M365_TIME_ZONE="Asia/Shanghai"
 ENV M365_MODEL_ALIAS="m365-copilot"
 ENV CHROME_CDP_PORT=9222
@@ -43,6 +42,9 @@ ENV IDLE_TIMEOUT_MINUTES=30
 ENV ADMIN_PASSWORD=""
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)" || exit 1
 
 # Start as root to fix volume permissions, then drop to app user in entrypoint
 ENTRYPOINT ["/entrypoint.sh"]

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -40,25 +42,43 @@ def create_app(
     _admin_secret = resolved_settings.admin_password or resolved_settings.api_key
     if not _admin_secret:
         print("WARNING: Neither API_KEY nor ADMIN_PASSWORD is set. Web admin page is open without authentication. Set ADMIN_PASSWORD in .env to secure it.")
+
+    # Generate a random admin session token instead of deterministic hash
+    _admin_session_token: str | None = secrets.token_hex(32) if _admin_secret else None
+
+    # Login rate limiting: track failed attempts by client IP
+    _login_failures: dict[str, list[float]] = {}
+    _LOGIN_RATE_LIMIT = 5       # max failures
+    _LOGIN_LOCKOUT_SEC = 60.0   # lockout duration
+
     app.state.copilot_client_factory = copilot_client_factory or (
         lambda: SubstrateCopilotClient(app.state.token_store.get(), resolved_settings.time_zone)
     )
-
-    def _admin_cookie_hash() -> str:
-        """Hash of admin secret used as admin session token."""
-        return hashlib.sha256(("admin:" + _admin_secret).encode()).hexdigest()[:32]
 
     def _is_admin_authenticated(request: Request) -> bool:
         """Check if the request has a valid admin auth cookie."""
         if not _admin_secret:
             return True
+        if _admin_session_token is None:
+            return False
         cookie_val = request.cookies.get("admin_auth", "")
-        return cookie_val == _admin_cookie_hash()
+        return secrets.compare_digest(cookie_val, _admin_session_token)
+
+    def _require_admin(request: Request):
+        """Check admin cookie auth; return error response or None."""
+        if _admin_secret and not _is_admin_authenticated(request):
+            return JSONResponse({"error": {"message": "Admin authentication required", "type": "auth_error"}}, status_code=401)
+        return None
+
+    # CORS: use configurable origin whitelist (comma-separated ALLOWED_ORIGINS env var)
+    _allowed_origins_raw = os.environ.get("ALLOWED_ORIGINS", "").strip()
+    _allowed_origins = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()] if _allowed_origins_raw else ["*"]
+    _cors_is_wildcard = "*" in _allowed_origins
 
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_allowed_origins,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "x-m365-session-id"],
         max_age=86400,
@@ -72,7 +92,12 @@ def create_app(
             return await call_next(request)
         # Add CORS headers to all responses from this middleware
         def with_cors(resp):
-            resp.headers["Access-Control-Allow-Origin"] = "*"
+            if _cors_is_wildcard:
+                resp.headers["Access-Control-Allow-Origin"] = "*"
+            else:
+                origin = request.headers.get("origin", "")
+                if origin in _allowed_origins:
+                    resp.headers["Access-Control-Allow-Origin"] = origin
             resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
             resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, x-m365-session-id"
             resp.headers["Access-Control-Max-Age"] = "86400"
@@ -162,12 +187,6 @@ def create_app(
     async def healthz() -> dict:
         return {"status": "ok", "token": app.state.token_store.status()}
 
-    def _require_admin(request: Request):
-        """Check admin cookie auth; return error response or None."""
-        if _admin_secret and not _is_admin_authenticated(request):
-            return JSONResponse({"error": {"message": "Admin authentication required", "type": "auth_error"}}, status_code=401)
-        return None
-
     @app.get("/admin/token/status")
     async def token_status(request: Request) -> dict:
         err = _require_admin(request)
@@ -209,14 +228,17 @@ def create_app(
         else:
             text = f"M365_ACCESS_TOKEN={token}\n"
         env_path.write_text(text, encoding="utf-8")
+        os.chmod(env_path, 0o600)
         # Update in-memory store
         app.state.token_store._token = token
         app.state.token_store._mtime_ns = None
         return {"status": "ok", "message": "Token updated", "token_status": app.state.token_store.status()}
 
     @app.post("/admin/token/auto-capture")
-    async def auto_capture_token() -> dict:
+    async def auto_capture_token(request: Request) -> dict:
         """Auto-capture token from Chromium CDP running inside the container."""
+        err = _require_admin(request)
+        if err: return err
         import asyncio
         from .cli import _cdp_extract_token, _write_token
         cdp_port = 9222
@@ -371,12 +393,24 @@ def create_app(
 
     @app.post("/admin/login")
     async def admin_login(request: Request) -> Response:
+        # Rate limiting: check if client IP is locked out
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        failures = _login_failures.get(client_ip, [])
+        # Remove expired entries
+        failures = [t for t in failures if now - t < _LOGIN_LOCKOUT_SEC]
+        _login_failures[client_ip] = failures
+        if len(failures) >= _LOGIN_RATE_LIMIT:
+            return JSONResponse({"error": {"message": "Too many login attempts, try again later", "type": "auth_error"}}, status_code=429)
+
         body = await request.json()
         password = body.get("password", "")
-        if password == _admin_secret:
+        if _admin_secret and secrets.compare_digest(password, _admin_secret):
             resp = JSONResponse({"status": "ok"})
-            resp.set_cookie("admin_auth", _admin_cookie_hash(), max_age=86400 * 7, httponly=True, samesite="lax", path="/")
+            resp.set_cookie("admin_auth", _admin_session_token, max_age=86400 * 7, httponly=True, samesite="lax", secure=bool(int(os.environ.get("ADMIN_COOKIE_SECURE", "0"))), path="/")
             return resp
+        # Record failed attempt
+        _login_failures.setdefault(client_ip, []).append(now)
         return JSONResponse({"error": {"message": "Wrong password", "type": "auth_error"}}, status_code=401)
 
     @app.get("/", response_class=HTMLResponse)
@@ -764,7 +798,7 @@ const i18n={
     qs_open_copilot:'打开',qs_type_trigger:'输入内容触发 WebSocket，然后在脚本面板点击',qs_push_token:'推送 Token',
     qs_alternative:'备选：',qs_manual_copy:'在 DevTools（Network → WS → wss://substrate.office.com/...）中手动复制 ',
     qs_paste_above:'然后粘贴到上方。',title_api_endpoints:'API 端点',
-    desc_paste_token:'粘贴 access_token 值或完整的 wss:// URL，来自',
+    desc_paste_token:'粘贴 access_token 值或完整的 wss:// URL',
     valid:'有效',invalid:'无效',expires:'过期时间',remaining:'剩余',error:'错误',
     login:'登录',logged_in:'已登录',not_logged_in:'未登录（仅手动推送 Token）',
     page:'页面',title:'标题',chromium_not_running:'Chromium 未运行',

@@ -386,6 +386,10 @@ def _write_token(token: str) -> None:
     else:
         text = f"M365_ACCESS_TOKEN={token}\n"
     env_path.write_text(text, encoding="utf-8")
+    try:
+        env_path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def main() -> None:
