@@ -1,14 +1,22 @@
 #!/bin/bash
+set -e
 
 CDP_PORT="${CHROME_CDP_PORT:-9222}"
 CHROME_PROFILE="/chrome-profile"
 AUTO_REFRESH="${AUTO_REFRESH:-true}"
 
-# Create Chrome profile directory
-mkdir -p "$CHROME_PROFILE"
+# --- Root-only section: fix permissions and clean stale locks ---
+if [ "$(id -u)" = "0" ]; then
+    # Fix volume ownership (Docker volumes default to root:root on first mount)
+    chown -R app:app "$CHROME_PROFILE" 2>/dev/null || true
+    mkdir -p "$CHROME_PROFILE" 2>/dev/null || true
+    rm -f "$CHROME_PROFILE/SingletonLock" "$CHROME_PROFILE/SingletonCookie" "$CHROME_PROFILE/SingletonSocket" 2>/dev/null || true
 
-# Remove stale lock files from previous container runs
-rm -f "$CHROME_PROFILE/SingletonLock" "$CHROME_PROFILE/SingletonCookie" "$CHROME_PROFILE/SingletonSocket" 2>/dev/null
+    # Re-exec as app user, preserving environment
+    exec runuser -u app --preserve-environment -- "$0" "$@"
+fi
+
+# --- Below runs as app user ---
 
 # Detect Chromium binary (name varies by distro)
 if command -v chromium &> /dev/null; then

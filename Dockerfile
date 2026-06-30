@@ -43,6 +43,5 @@ ENV IDLE_TIMEOUT_MINUTES=30
 
 EXPOSE 8000
 
-USER app
-
+# Start as root to fix volume permissions, then drop to app user in entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
