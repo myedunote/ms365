@@ -1504,7 +1504,7 @@ async function loadCallLog(){
       const reprKey='r'+i, textKey='x'+i;
       if(l.response_repr!=null)window.__callTexts[reprKey]=l.response_repr;
       if(l.response_text!=null)window.__callTexts[textKey]=l.response_text;
-      const copyBtn=(key)=>'<button id="copybtn-'+key+'" onclick="copyCallText(\''+key+'\')" style="padding:2px 8px;font-size:.65rem;margin-left:6px">'+t('copy')+'</button>';
+      const copyBtn=(key)=>'<button class="copybtn" id="copybtn-'+key+'" data-key="'+key+'" style="padding:2px 8px;font-size:.65rem;margin-left:6px">'+t('copy')+'</button>';
       const respView=(l.response_repr||l.response_text)?
         '<details style="margin-top:4px"><summary style="cursor:pointer;color:#64748b;font-size:.75rem;list-style:none">'+t('view_raw')+'</summary>'+
         (l.response_repr?'<div style="display:flex;align-items:center;color:#475569;margin-top:4px;font-size:.7rem">repr:'+copyBtn(reprKey)+'</div><pre style="white-space:pre-wrap;word-break:break-all;background:#0f172a;padding:6px;border-radius:6px;color:#94a3b8;margin-top:2px;font-size:.7rem;max-height:200px;overflow:auto">'+esc(l.response_repr)+'</pre>':'')+
@@ -1520,6 +1520,9 @@ async function loadCallLog(){
         '</div>';
     }
     el.innerHTML=html;
+    el.querySelectorAll('.copybtn').forEach(function(b){
+      b.addEventListener('click',function(){copyCallText(b.getAttribute('data-key'))});
+    });
   }catch(e){}
 }
 </script>
