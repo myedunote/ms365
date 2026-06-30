@@ -34,6 +34,28 @@
     // Store the latest token
     let latestToken = '';
 
+    // Extract current username from page
+    function getUsername() {
+        try {
+            // M365 Copilot stores user info in sessionStorage
+            const s = sessionStorage.getItem('ms-m365-shell-session-data');
+            if (s) {
+                const d = JSON.parse(s);
+                if (d && d.userDisplayName) return d.userDisplayName;
+                if (d && d.upn) return d.upn.split('@')[0];
+            }
+        } catch {}
+        try {
+            // Try persona button or header elements
+            const els = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], [aria-label*="Account"], [aria-label*="Profiles"]');
+            for (const el of els) {
+                const t = el.textContent.trim();
+                if (t && t.length > 0 && t.length < 80) return t;
+            }
+        } catch {}
+        return '';
+    }
+
     // Intercept WebSocket construction on the real page (not in sandbox)
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
@@ -156,11 +178,12 @@
         const base = getProxyBase();
         if (!base) { alert('Please enter proxy URL first'); return; }
         if (!latestToken) { alert('No token captured yet. Type something in Copilot to trigger WebSocket.'); return; }
+        const username = getUsername();
         try {
             const r = await gmFetch(base + '/admin/token/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: latestToken })
+                body: JSON.stringify({ token: latestToken, username: username || undefined })
             });
             const d = await r.json();
             alert(r.ok ? `Token pushed! Remaining: ${d.token_status?.seconds_remaining}s` : `Failed: ${d.error?.message || d.error}`);
@@ -233,10 +256,11 @@
 
             // Step 2: Push token
             btn.textContent = '2/2 Pushing token...';
+            const username = getUsername();
             const r = await gmFetch(base + '/admin/token/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: latestToken })
+                body: JSON.stringify({ token: latestToken, username: username || undefined })
             });
             const d = await r.json();
             if (r.ok) {

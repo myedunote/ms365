@@ -38,6 +38,7 @@ def create_app(
     app.state.auto_refresh_enabled = False  # On-demand: only refresh when /v1/ requests come in
     app.state.last_request_time = 0  # 0 means never received any /v1/ request
     app.state.idle_timeout_minutes = resolved_settings.idle_timeout_minutes
+    app.state.username = ""  # Set via get_token.js push or CDP extraction
     if not resolved_settings.api_key:
         print("WARNING: API_KEY is not set. All /v1/ API endpoints are open without authentication. Set API_KEY in .env to secure your instance.")
     _admin_secret = resolved_settings.admin_password or resolved_settings.api_key
@@ -209,6 +210,7 @@ def create_app(
         if err: return err
         body = await request.json()
         token = body.get("token", "").strip()
+        username = body.get("username", "").strip()
         if not token:
             return _json_err(400, "Token is empty")
         # Extract token from full WebSocket URL if needed
@@ -222,6 +224,8 @@ def create_app(
         # Update in-memory store
         app.state.token_store._token = token
         app.state.token_store._mtime_ns = None
+        if username:
+            app.state.username = username
         return {"status": "ok", "message": "Token updated", "token_status": app.state.token_store.status()}
 
     @app.post("/admin/token/auto-capture")
@@ -352,7 +356,8 @@ def create_app(
         page_title = tab.get("title", "")
         page_url = tab.get("url", "")
         cookie_details = []
-        username = None
+        # Extract username: prefer app.state.username (set by get_token.js push)
+        username = getattr(app.state, 'username', '') or None
         try:
             async with _ws.connect(tab["webSocketDebuggerUrl"]) as ws:
                 # Get page cookies for M365 domain
@@ -468,7 +473,7 @@ def create_app(
         except Exception as exc:
             return _json_err(502, f"CDP logout failed: {exc}")
 
-        return {"status": "ok", "message": f"Logged out. Cleared {cleared}/{len(cookies)} cookies."}
+        return {"status": "ok", "message": f"Logged out. Cleared {cleared}/{len(cookies)} cookies.", "username": ""}
 
     @app.post("/admin/login")
     async def admin_login(request: Request) -> Response:
