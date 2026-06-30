@@ -78,7 +78,7 @@ def create_app(
         # Track last request time for idle detection & on-demand refresh
         if path.startswith("/v1/"):
             app.state.last_request_time = time.time()
-            # On-demand refresh: if auto_refresh paused and token expired (or no token), wake it up
+            # On-demand refresh: if auto_refresh paused and token expired (or no token), wake it up and wait
             if not app.state.auto_refresh_enabled:
                 token = app.state.token_store.get()
                 need_wake = False
@@ -94,6 +94,18 @@ def create_app(
                         need_wake = True
                 if need_wake:
                     app.state.auto_refresh_enabled = True
+                    # Wait for token to be refreshed by _auto_refresh_loop (up to 60s)
+                    import asyncio
+                    for _ in range(60):
+                        await asyncio.sleep(1)
+                        new_token = app.state.token_store.get()
+                        if new_token and new_token != token:
+                            try:
+                                claims = decode_jwt_payload(new_token)
+                                if time.time() < claims.get("exp", 0):
+                                    break
+                            except Exception:
+                                pass
         if not resolved_settings.api_key:
             return await call_next(request)
         # Skip auth for admin page (has its own cookie check) and health endpoints
