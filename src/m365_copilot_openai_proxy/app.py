@@ -90,14 +90,8 @@ def create_app(
         if not resolved_settings.api_key:
             return await call_next(request)
         # Skip auth for admin page (has its own cookie check) and health endpoints
-        if path in ("/", "/favicon.ico", "/healthz", "/admin/login"):
+        if path in ("/", "/favicon.ico", "/healthz", "/admin/login", "/admin/token/status", "/admin/token/update", "/admin/token/auto-capture", "/admin/token/auto-refresh-toggle", "/admin/cookie/inject", "/admin/chromium/login-status"):
             return await call_next(request)
-        # Protect /admin/* endpoints with cookie auth
-        if path.startswith("/admin/") and not _is_admin_authenticated(request):
-            return with_cors(JSONResponse(
-                status_code=401,
-                content={"error": {"message": "Admin authentication required", "type": "auth_error"}},
-            ))
         auth = request.headers.get("Authorization", "")
         match = re.match(r"^Bearer\s+(.+)$", auth, re.IGNORECASE)
         if match and match.group(1) == resolved_settings.api_key:
@@ -134,19 +128,31 @@ def create_app(
     async def healthz() -> dict:
         return {"status": "ok", "token": app.state.token_store.status()}
 
+    def _require_admin(request: Request):
+        """Check admin cookie auth; return error response or None."""
+        if resolved_settings.api_key and not _is_admin_authenticated(request):
+            return JSONResponse({"error": {"message": "Admin authentication required", "type": "auth_error"}}, status_code=401)
+        return None
+
     @app.get("/admin/token/status")
-    async def token_status() -> dict:
+    async def token_status(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
         status = app.state.token_store.status()
         status["auto_refresh"] = app.state.auto_refresh_enabled
         return status
 
     @app.post("/admin/token/auto-refresh-toggle")
-    async def toggle_auto_refresh() -> dict:
+    async def toggle_auto_refresh(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
         app.state.auto_refresh_enabled = not app.state.auto_refresh_enabled
         return {"status": "ok", "auto_refresh": app.state.auto_refresh_enabled}
 
     @app.post("/admin/token/update")
     async def update_token(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
         body = await request.json()
         token = body.get("token", "").strip()
         if not token:
@@ -194,7 +200,8 @@ def create_app(
 
     @app.post("/admin/cookie/inject")
     async def inject_cookie(request: Request) -> dict:
-        """Inject cookies into Chromium via CDP to log in to M365."""
+        err = _require_admin(request)
+        if err: return err
         body = await request.json()
         cookies = body.get("cookies", [])
         if not cookies:
@@ -271,8 +278,9 @@ def create_app(
         return {"status": "ok", "message": f"Injected {injected}/{len(cookies)} cookies. Page navigating to M365...", "injected": injected, "total": len(cookies)}
 
     @app.get("/admin/chromium/login-status")
-    async def chromium_login_status() -> dict:
-        """Check if Chromium is logged in to M365 Copilot."""
+    async def chromium_login_status(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
         import httpx as _httpx
         import websockets as _ws
         import asyncio as _async
