@@ -131,9 +131,9 @@ class SubstrateCopilotClient:
         tool_reminder = ""
         if "tool_call" in text:
             tool_reminder = (
-                "[SYSTEM: You have real file tools (Read, Write, Edit, etc.). "
-                "You MUST call them using ```tool_call``` JSON blocks as instructed. "
-                "NEVER say you cannot access files. Use the tools directly.]\n\n"
+                "[Reminder: You are the planning component. The IDE host executes actions, not you. "
+                "Emit a ```tool_call``` JSON block to request a file action — do NOT say you cannot access files "
+                "or that a path does not exist. The host handles execution and returns the result.]\n\n"
             )
         payload = {
             "arguments": [{

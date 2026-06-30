@@ -27,41 +27,92 @@ _SESSION_ID_HEADER = "x-m365-session-id"
 
 import re as _re
 
+# Primary: fenced ```tool_call blocks. Fallback: ```json blocks that look like a tool call.
 _TOOL_CALL_RE = _re.compile(
     r"```tool_call\s*\n(.*?)\n\s*```",
     _re.DOTALL,
 )
+_JSON_BLOCK_RE = _re.compile(
+    r"```(?:json)?\s*\n(\{.*?\})\n\s*```",
+    _re.DOTALL,
+)
+
+
+def _coerce_tool_call(obj: dict) -> dict | None:
+    """Turn a parsed JSON object into an OpenAI tool_call dict if it looks like one."""
+    if not isinstance(obj, dict):
+        return None
+    # Accept {"name": ..., "arguments": {...}} or common variants
+    name = obj.get("name") or obj.get("tool") or obj.get("tool_name") or obj.get("function")
+    if not name or not isinstance(name, str):
+        return None
+    arguments = obj.get("arguments")
+    if arguments is None:
+        arguments = obj.get("parameters")
+    if arguments is None:
+        # Treat remaining keys (minus name markers) as the arguments
+        arguments = {k: v for k, v in obj.items()
+                     if k not in ("name", "tool", "tool_name", "function")}
+    if isinstance(arguments, dict):
+        arguments = json.dumps(arguments, ensure_ascii=False)
+    elif not isinstance(arguments, str):
+        arguments = str(arguments)
+    return {
+        "id": f"call_{uuid.uuid4().hex[:24]}",
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
 
 
 def _extract_tool_calls(text: str) -> list[dict]:
-    """Parse tool_call JSON blocks from model text output into OpenAI tool_calls format."""
+    """Parse tool_call JSON blocks from model text output into OpenAI tool_calls format.
+
+    Tolerant to several formats the M365 Copilot model may emit:
+    1. ```tool_call fenced blocks (preferred)
+    2. ```json (or bare ```) fenced blocks whose JSON has a "name" key
+    """
     calls = []
-    for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
-        raw = m.group(1).strip()
+    matched_spans: list[tuple[int, int]] = []
+
+    # 1. Preferred tool_call blocks
+    for m in _TOOL_CALL_RE.finditer(text):
         try:
-            obj = json.loads(raw)
+            obj = json.loads(m.group(1).strip())
         except json.JSONDecodeError:
             continue
-        name = obj.get("name", "")
-        arguments = obj.get("arguments", obj)
-        if isinstance(arguments, dict):
-            arguments = json.dumps(arguments, ensure_ascii=False)
-        elif not isinstance(arguments, str):
-            arguments = str(arguments)
-        calls.append({
-            "id": f"call_{uuid.uuid4().hex[:24]}",
-            "type": "function",
-            "function": {
-                "name": name,
-                "arguments": arguments,
-            },
-        })
+        tc = _coerce_tool_call(obj)
+        if tc:
+            calls.append(tc)
+            matched_spans.append(m.span())
+
+    # 2. Fallback: json/plain fenced blocks that look like tool calls
+    for m in _JSON_BLOCK_RE.finditer(text):
+        # Skip if this span overlaps an already-matched tool_call block
+        if any(s <= m.start() < e for s, e in matched_spans):
+            continue
+        try:
+            obj = json.loads(m.group(1).strip())
+        except json.JSONDecodeError:
+            continue
+        tc = _coerce_tool_call(obj)
+        if tc:
+            calls.append(tc)
+
     return calls
 
 
 def _strip_tool_call_blocks(text: str) -> str:
     """Remove tool_call code blocks from text, keeping surrounding content."""
-    return _TOOL_CALL_RE.sub("", text).strip()
+    cleaned = _TOOL_CALL_RE.sub("", text)
+    # Also strip json/plain blocks that were parsed as tool calls
+    def _maybe_strip(m):
+        try:
+            obj = json.loads(m.group(1).strip())
+        except json.JSONDecodeError:
+            return m.group(0)
+        return "" if _coerce_tool_call(obj) else m.group(0)
+    cleaned = _JSON_BLOCK_RE.sub(_maybe_strip, cleaned)
+    return cleaned.strip()
 
 
 def _update_username_from_token(token: str, state) -> None:
@@ -1086,7 +1137,10 @@ a:hover{text-decoration:underline}
 <strong style="color:#f59e0b" data-i18n="qs_alternative">备选：</strong><span data-i18n="qs_manual_copy">在 DevTools（Network → WS → wss://substrate.office.com/...）中手动复制 </span><code>access_token</code>，<span data-i18n="qs_paste_above">然后粘贴到上方。</span>
 </p>
 <details style="cursor:pointer">
-<summary style="font-weight:600;color:#e2e8f0;list-style:none" data-i18n="title_api_endpoints">API 端点</summary>
+<summary style="font-weight:600;color:#e2e8f0;list-style:none;display:flex;align-items:center;gap:.5rem">
+<span data-i18n="title_api_endpoints">API 端点</span>
+<span style="font-size:.7rem;color:#475569;margin-left:auto" data-i18n="click_expand">点击展开</span>
+</summary>
 <div class="api-info" style="margin-top:.5rem">
 GET  /healthz<br>
 GET  /admin/token/status<br>

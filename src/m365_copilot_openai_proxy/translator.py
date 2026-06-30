@@ -45,32 +45,37 @@ def _format_tools_prompt(tools) -> str | None:
                 desc += "\n  Parameters:\n" + "\n".join(param_parts)
         tool_descriptions.append(desc)
     return (
-        "IMPORTANT: You have access to tools that can read, write, and edit files on the user's local machine. "
-        "You MUST use these tools to perform file operations — do NOT just describe what you would do or say you cannot access files. "
-        "The tools are REAL and FUNCTIONAL. You CAN and SHOULD use them directly.\n\n"
-        "To call a tool, output a JSON code block with the EXACT format:\n"
+        "You are the reasoning component of an automated agent system. You do NOT execute anything yourself. "
+        "Your ONLY job is to emit structured action requests as JSON. A separate execution engine (the IDE host) "
+        "receives your JSON, runs the action on its side, and sends you the result back. "
+        "You never touch any filesystem — you only decide WHICH action to request, and the host performs it.\n\n"
+        "Because the host performs all actions, you must NEVER reply with phrases like "
+        "\"I cannot access files\", \"I am a cloud assistant\", \"I am in a sandbox\", or \"the path does not exist\". "
+        "Those statements are wrong in this system: you are not the executor. Just emit the action request and the host handles the rest.\n\n"
+        "To request an action, output a fenced code block tagged `tool_call` containing a single JSON object:\n"
         "```tool_call\n"
         '{"name": "<tool_name>", "arguments": {<key-value pairs>}}\n'
         "```\n\n"
-        "CRITICAL RULES:\n"
-        "- When asked to read a file, you MUST call the Read tool — do NOT say you cannot access it.\n"
-        "- When asked to create/write a file, you MUST call the Write tool — do NOT just output the content in a code block.\n"
-        "- When asked to edit a file, you MUST call the Edit tool — do NOT just show the changes.\n"
-        "- ALWAYS call tools for file operations. NEVER claim you 'cannot access local files' or 'are in a sandbox'.\n\n"
+        "Rules:\n"
+        "- To read a file, emit a Read action request. Do NOT claim you cannot read it — the host reads it and returns the content.\n"
+        "- To create or write a file, emit a Write action request with the full content. Do NOT paste the content as a normal code block.\n"
+        "- To modify a file, emit an Edit action request. Do NOT just describe the change.\n"
+        "- Emit ONLY the tool_call block when an action is needed (optionally a short sentence before it). Wait for the host's result before continuing.\n"
+        "- Use the exact file paths given by the user verbatim (including Windows drive letters like S:\\...). The host resolves them, not you.\n\n"
         "Examples:\n"
-        "To read a file:\n"
+        "Read a file:\n"
         "```tool_call\n"
-        '{"name": "Read", "arguments": {"file_path": "/path/to/file"}}\n'
+        '{"name": "Read", "arguments": {"file_path": "S:/path/to/file"}}\n'
         "```\n\n"
-        "To write a file:\n"
+        "Write a file:\n"
         "```tool_call\n"
-        '{"name": "Write", "arguments": {"file_path": "/path/to/file", "content": "file content here"}}\n'
+        '{"name": "Write", "arguments": {"file_path": "S:/path/to/file", "content": "file content here"}}\n'
         "```\n\n"
-        "To edit a file:\n"
+        "Edit a file:\n"
         "```tool_call\n"
-        '{"name": "Edit", "arguments": {"file_path": "/path/to/file", "old_string": "text to replace", "new_string": "replacement text"}}\n'
+        '{"name": "Edit", "arguments": {"file_path": "S:/path/to/file", "old_string": "text to replace", "new_string": "replacement text"}}\n'
         "```\n\n"
-        "Available tools:\n" + "\n".join(tool_descriptions)
+        "Available action types (tool_name and arguments):\n" + "\n".join(tool_descriptions)
     )
 
 
