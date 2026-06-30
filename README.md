@@ -33,12 +33,11 @@ docker-compose up -d
 #### 方式一：油猴脚本（推荐）
 
 1. 安装 [Tampermonkey BETA](https://www.tampermonkey.net/) 浏览器扩展
-2. 点击 Tampermonkey BETA 图标 → **添加新脚本**
-3. 将 [get_token.js](https://raw.githubusercontent.com/MurasameCyan/ciallo-ms365-openai-proxy/main/docker/get_token.js) 的内容粘贴进去，保存
-4. 打开 [M365 Copilot](https://m365.cloud.microsoft/chat) 并登录你的 M365 账号
-5. 在 Copilot 对话框中**输入任意字符**触发 WebSocket 连接
-6. 页面右上角弹出 Token 提取面板
-7. 点击 **One-Click Setup** — 自动推送 Cookie + Token 到代理服务
+2. 点击 [一键脚本](https://gh-proxy.com/https://raw.githubusercontent.com/MurasameCyan/Ciallo-Ms-365-OpenAI-Proxy-Docker/main/get_token.user.js) 安装油猴脚本
+3. 打开 [M365 Copilot](https://m365.cloud.microsoft/chat) 并登录你的 M365 账号
+4. 在 Copilot 对话框中**输入任意字符**触发 WebSocket 连接
+5. 页面右上角弹出 推送面板
+6. 点击 **One-Click Setup** — 自动推送 Cookie + Token 到代理服务
 
 > **首次需要先推送 Cookie** 让 Chromium 登录 M365，之后 Auto Capture 即可自动刷新 Token。
 

@@ -910,6 +910,10 @@ def create_app(
                 session is not None
                 and session.turn_count > 0
             )
+            # Diagnostics: surface in the web call-log so we can see whether the
+            # incremental optimization actually kicks in across turns.
+            call_record["incremental"] = incremental
+            call_record["turn_count"] = session.turn_count if session is not None else None
             translated = translate_openai_request(request, incremental=incremental)
             if request.stream:
                 # Save call record for streaming (tool_calls_result resolved later)
@@ -1375,7 +1379,7 @@ a:hover{text-decoration:underline}
 <h2 data-i18n="title_tone">对话模式</h2>
 <div style="font-size:.8rem;color:#64748b;margin-bottom:.5rem" data-i18n="tone_hint">选择 M365 Copilot 的对话模式（模型），立即生效并持久保存。</div>
 <div style="display:flex;align-items:center;gap:.5rem">
-<select id="tone-select" style="flex:1;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:.85rem;outline:none"></select>
+<select id="tone-select" style="flex:1;padding:8px 36px 8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:.85rem;outline:none;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center"></select>
 <span id="tone-saved" style="font-size:.75rem;color:#22c55e;opacity:0;transition:opacity .3s"></span>
 </div>
 </div>
@@ -1809,6 +1813,7 @@ async function loadCallLog(){
         '<div style="display:flex;justify-content:space-between;align-items:center;color:#94a3b8">'+
         '<span>'+l.time+'</span><span style="display:flex;align-items:center;gap:6px"><span style="color:#475569">'+(l.stream?'stream':'sync')+'</span>'+copyFullBtn+'</span></div>'+
         '<div style="color:#e2e8f0;margin-top:2px">tools: <span style="color:#38bdf8">'+tc+'</span></div>'+
+        (l.incremental!=null?'<div style="color:#475569;margin-top:2px">incremental: <span style="color:'+(l.incremental?'#22c55e':'#f59e0b')+'">'+(l.incremental?'yes':'no')+'</span> &nbsp; turn: '+(l.turn_count==null?'-':l.turn_count)+'</div>':'')+
         (tr?'<div style="margin-top:2px">'+tr+'</div>':'')+
         (l.response_len?'<div style="color:#475569;margin-top:2px">resp: '+l.response_len+' chars</div>':'')+
         respView+

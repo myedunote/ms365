@@ -12,6 +12,8 @@
 // @grant        GM_cookie
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @updateURL    https://gh-proxy.com/https://raw.githubusercontent.com/MurasameCyan/Ciallo-Ms-365-OpenAI-Proxy-Docker/main/get_token.user.js
+// @downloadURL  https://gh-proxy.com/https://raw.githubusercontent.com/MurasameCyan/Ciallo-Ms-365-OpenAI-Proxy-Docker/main/get_token.user.js
 // @connect      *
 // ==/UserScript==
 
