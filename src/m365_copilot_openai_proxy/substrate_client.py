@@ -59,9 +59,10 @@ _OPTIONS_SETS = [
     "enable_batch_token_processing",
     "enable_gg_gpt",
     "flux_v3_image_gen_enable_dimensions",
-    "flux_v3_image_gen_enable_icon_dimensions",
     "flux_v3_image_gen_enable_system_text_with_params",
     "flux_v3_image_gen_enable_designer_dimensions_meta_prompting_in_system_prompts",
+    "enable_structured_output",
+    "precise_mode",
 ]
 
 _ALLOWED_MESSAGE_TYPES = [
@@ -131,9 +132,16 @@ class SubstrateCopilotClient:
         tool_reminder = ""
         if "tool_call" in text:
             tool_reminder = (
-                "[Reminder: You are the planning component. The IDE host executes actions, not you. "
-                "Emit a ```tool_call``` JSON block to request a file action — do NOT say you cannot access files "
-                "or that a path does not exist. The host handles execution and returns the result.]\n\n"
+                "[INSTRUCTION] For ANY file action, your ONLY valid output format is a fenced code block:\n"
+                "```tool_call\n"
+                '{"name": "Write", "arguments": {"file_path": "...", "content": "..."}}\n'
+                "```\n"
+                "You MUST NOT:\n"
+                "- Say you cannot access files (the host does it for you)\n"
+                "- Say a path does not exist (you don't know — the host checks)\n"
+                "- Output code in ```bat / ```python blocks without a tool_call wrapper\n"
+                "- Say 'file saved' or '已生成' without actually emitting the tool_call block\n"
+                "You MUST emit the tool_call block immediately. No other format is accepted.[/INSTRUCTION]\n\n"
             )
         payload = {
             "arguments": [{
@@ -291,5 +299,10 @@ def _combine_text(prompt: str, context: list[str]) -> str:
     has_tools = any("tool_call" in c for c in context)
     result = "\n\n".join(context) + "\n\n---\n\n" + prompt
     if has_tools:
-        result += "\n\nRemember: To perform file operations, use the ```tool_call``` format as described above. Do NOT say you cannot access files."
+        result += (
+            "\n\n[FORMAT] Respond with a ```tool_call``` JSON block for any file action. "
+            "Example: ```tool_call\n"
+            '{"name": "Write", "arguments": {"file_path": "S:/path/file.ext", "content": "..."}}\n'
+            "``` No other output format is valid for file operations.[/FORMAT]"
+        )
     return result
