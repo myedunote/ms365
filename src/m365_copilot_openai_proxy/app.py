@@ -298,7 +298,9 @@ def create_app(
     init_token_dir(resolved_settings.token_dir)
     app.state.settings = resolved_settings
     app.state.token_store = AccessTokenStore(resolved_settings.access_token)
-    app.state.session_store = PersistentSessionStore()
+    app.state.session_store = PersistentSessionStore(
+        persist_path=Path(resolved_settings.token_dir) / "sessions.json"
+    )  # Persist to mounted volume so conversations survive container restarts
     app.state.call_log: list[dict] = []  # API call log for web UI display
     app.state.captured_payloads: list[dict] = []  # Substrate chat payloads captured via get_token.js for mode comparison
     app.state.auto_refresh_enabled = False  # On-demand: only refresh when /v1/ requests come in
