@@ -124,7 +124,10 @@ def create_app(
         return app.state.settings
 
     def get_copilot_client() -> SubstrateCopilotClient:
-        return app.state.copilot_client_factory()
+        try:
+            return app.state.copilot_client_factory()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # Global exception handler — always return JSON (never HTML error pages)
     @app.exception_handler(Exception)
@@ -132,6 +135,14 @@ def create_app(
         return JSONResponse(
             status_code=500,
             content={"error": {"message": str(exc), "type": "internal_error"}},
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"message": exc.detail, "type": "http_error"}},
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
@@ -847,7 +858,7 @@ async function loadStatus(){
       '<div class="status-row"><span class="status-label">'+t('valid')+'</span><span class="status-value '+cls+'">'+(v?t('status_yes'):t('status_no'))+'</span></div>'+
       '<div class="status-row"><span class="status-label">'+t('expires')+'</span><span class="status-value '+(v&&d.seconds_remaining<600?'warn':'')+'">'+exp+'</span></div>'+
       '<div class="status-row"><span class="status-label">'+t('remaining')+'</span><span class="status-value '+(v&&d.seconds_remaining<600?'warn':'')+'">'+fmtSec(d.seconds_remaining)+'</span></div>'+
-      '<div class="status-row"><span class="status-label" data-i18n="auto_refresh_label">自动刷新</span><span class="status-value '+(d.auto_refresh?'valid':'warn')+'">'+(d.auto_refresh?t('status_yes'):t('status_no'))+'</span></div>'+
+      '<div class="status-row"><span class="status-label">'+t('auto_refresh_label')+'</span><span class="status-value '+(d.auto_refresh?'valid':'warn')+'">'+(d.auto_refresh?t('status_yes'):t('status_no'))+'</span></div>'+
       (d.error?'<div class="status-row"><span class="status-label">'+t('error')+'</span><span class="status-value invalid">'+d.error+'</span></div>':'');
     updateRefreshBtn(d.auto_refresh);
   }catch(e){
