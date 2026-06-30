@@ -12,7 +12,8 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p "$CHROME_PROFILE" 2>/dev/null || true
     rm -f "$CHROME_PROFILE/SingletonLock" "$CHROME_PROFILE/SingletonCookie" "$CHROME_PROFILE/SingletonSocket" 2>/dev/null || true
 
-    # Re-exec as app user, preserving environment
+    # Re-exec as app user, preserving environment but fixing HOME
+    export HOME=/home/app
     exec runuser -u app --preserve-environment -- "$0" "$@"
 fi
 
@@ -50,7 +51,8 @@ if [ -n "$CHROME_BIN" ] && [ "$AUTO_REFRESH" = "true" ]; then
         --disable-features=InfiniteRestore,MediaRouter,DialMediaRouteProvider,TranslateUI \
         --disable-breakpad \
         --no-experiments \
-        "https://m365.cloud.microsoft/chat" 2>&1 | grep -v -E '(dbus|system_bus_socket|DEPRECATED_ENDPOINT|NameHasOwner|Properties\.GetAll)' &
+        --crash-dumps-dir=/tmp \
+        "https://m365.cloud.microsoft/chat" 2>&1 | grep -v -E '(dbus|system_bus_socket|DEPRECATED_ENDPOINT|NameHasOwner|Properties\.GetAll|crashpad)' &
 
     CHROME_PID=$!
     echo "Chromium started with PID $CHROME_PID"
