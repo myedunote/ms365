@@ -37,7 +37,7 @@
     // Extract current username from page
     function getUsername() {
         try {
-            // M365 Copilot stores user info in sessionStorage
+            // M365 Copilot stores user info in sessionStorage (most reliable)
             const s = sessionStorage.getItem('ms-m365-shell-session-data');
             if (s) {
                 const d = JSON.parse(s);
@@ -46,19 +46,32 @@
             }
         } catch {}
         try {
+            // Try aria-label on avatar/persona buttons (e.g. aria-label="Account Manager for John Doe")
+            const avatarEls = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], button[aria-label*="Account"], button[aria-label*="Manager"], [role="button"][aria-label*="for "], [role="button"][title*="for "], [role="button"][aria-label*="概要"]');
+            for (const el of avatarEls) {
+                const a = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                // Pattern: "Account Manager for John Doe" or "John Doe 的帐户"
+                const m = a.match(/(?:for\s+|的[帐账]户(?:管理器)?[：:]?\s*)(.+)/i) || a.match(/^(.+?)(?:\s*\(|\s*-|\s*的)/);
+                if (m && m[1] && m[1].trim().length > 1 && m[1].trim().length < 80) return m[1].trim();
+                // If aria-label is just the name itself (not a common UI keyword)
+                if (a && a.length > 1 && a.length < 80 && !/^(home|copilot|apps|chat|create|menu|back|close)$/i.test(a)) return a.trim();
+            }
+        } catch {}
+        try {
             // Try persona button or header elements
             const els = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], [aria-label*="Account"], [aria-label*="Profiles"]');
             for (const el of els) {
                 const t = el.textContent.trim();
-                if (t && t.length > 0 && t.length < 80) return t;
+                if (t && t.length > 1 && t.length < 80) return t;
             }
         } catch {}
         try {
-            // Fluent UI text span (class fui-Text fai-bebop) — the username shown in header/sidebar
+            // Fluent UI text span — but only accept multi-char text (skip single-letter avatar initials)
             const fus = document.querySelectorAll('span.fui-Text, span[class*="fai-bebop"]');
             for (const el of fus) {
                 const t = el.textContent.trim();
-                if (t && t.length > 0 && t.length < 80 && !/^(home|copilot|apps|chat|create)$/i.test(t)) return t;
+                // Skip single characters (avatar initials like "G") and common UI labels
+                if (t && t.length > 1 && t.length < 80 && !/^(home|copilot|apps|chat|create)$/i.test(t)) return t;
             }
         } catch {}
         return '';

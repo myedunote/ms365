@@ -384,15 +384,24 @@ def create_app(
                         _USER_JS = """(() => {
                             try { const s = sessionStorage.getItem('ms-m365-shell-session-data'); if (s) { const d = JSON.parse(s); if (d && d.userDisplayName) return d.userDisplayName; if (d && d.upn) return d.upn.split('@')[0]; } } catch {}
                             try {
-                                const els = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], [aria-label*="Account"], [aria-label*="Profiles"], .ms-Icon--People, button[title*="Account"], span[id*="person"]');
-                                for (const el of els) { const t = el.textContent.trim(); if (t && t.length > 0 && t.length < 80) return t; }
+                                const av = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], button[aria-label*="Account"], button[aria-label*="Manager"], [role="button"][aria-label*="for "], [role="button"][title*="for "], [role="button"][aria-label*="概要"]');
+                                for (const el of av) {
+                                    const a = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                                    const m = a.match(/(?:for\\s+|的[帐账]户(?:管理器)?[：:]?\\s*)(.+)/i) || a.match(/^(.+?)(?:\\s*\\(|\\s*-|\\s*的)/);
+                                    if (m && m[1] && m[1].trim().length > 1 && m[1].trim().length < 80) return m[1].trim();
+                                    if (a && a.length > 1 && a.length < 80 && !/^(home|copilot|apps|chat|create|menu|back|close)$/i.test(a)) return a.trim();
+                                }
                             } catch {}
                             try {
-                                const profile = document.querySelector('div[class*="persona"] span, div[class*="UserProfile"] span, img[alt]'); if (profile) { const a = profile.getAttribute('alt') || profile.textContent; if (a && a.trim()) return a.trim(); } } catch {}
+                                const els = document.querySelectorAll('[data-testid="header-person-menu"], [data-testid="persona"], [aria-label*="Account"], [aria-label*="Profiles"], .ms-Icon--People, button[title*="Account"], span[id*="person"]');
+                                for (const el of els) { const t = el.textContent.trim(); if (t && t.length > 1 && t.length < 80) return t; }
+                            } catch {}
+                            try {
+                                const profile = document.querySelector('div[class*="persona"] span, div[class*="UserProfile"] span, img[alt]'); if (profile) { const a = profile.getAttribute('alt') || profile.textContent; if (a && a.trim() && a.trim().length > 1) return a.trim(); } } catch {}
                             try {
                                 const fus = document.querySelectorAll('span.fui-Text, span[class*="fai-bebop"]');
                                 const skip = /^(home|copilot|apps|chat|create|new|file|edit|view|insert|format|tools|help|share|send|save|open|close|settings|back|next|previous|more|menu|search|filter|sort|refresh|delete|cancel|ok|yes|no)$/i;
-                                for (const el of fus) { const t = el.textContent.trim(); if (t && t.length > 0 && t.length < 80 && !skip.test(t)) return t; }
+                                for (const el of fus) { const t = el.textContent.trim(); if (t && t.length > 1 && t.length < 80 && !skip.test(t)) return t; }
                             } catch {}
                             return null;
                         })()"""
@@ -1049,8 +1058,7 @@ async function loadChromiumStatus(){
       return;
     }
     const logCls=d.logged_in?'valid':('warn');
-    const displayName=d.username||(d.logged_in&&window.__m365_username)||'';
-    const logText=d.logged_in?(displayName?('('+displayName+') '):'')+t('logged_in'):t('not_logged_in');
+    const logText=d.logged_in?t('logged_in'):t('not_logged_in');
     let html='<div class="status-row"><span class="status-label">'+t('login')+'</span><span class="status-value '+logCls+'">'+logText+'</span></div>';
     // Show/hide logout button based on login status
     const logoutBtn=document.getElementById('btn-logout');
