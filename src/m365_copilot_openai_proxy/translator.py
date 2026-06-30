@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 from .models import (
     AnthropicMessagesRequest,
     ContentPart,
     OpenAIChatRequest,
+    ToolCall,
     TranslatedRequest,
 )
 
@@ -22,16 +24,90 @@ def _join_lines(lines: Iterable[str]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
+def _format_tools_prompt(tools) -> str | None:
+    """Format tool definitions into a system-level prompt so the model knows about available tools."""
+    if not tools:
+        return None
+    tool_descriptions = []
+    for tool in tools:
+        func = tool.function
+        desc = f"- {func.name}: {func.description or 'No description'}"
+        if func.parameters:
+            props = func.parameters.get("properties", {})
+            required = func.parameters.get("required", [])
+            param_parts = []
+            for pname, pdef in props.items():
+                ptype = pdef.get("type", "any")
+                pdesc = pdef.get("description", "")
+                req_flag = " (required)" if pname in required else ""
+                param_parts.append(f"    - {pname}: {ptype}{req_flag} — {pdesc}")
+            if param_parts:
+                desc += "\n  Parameters:\n" + "\n".join(param_parts)
+        tool_descriptions.append(desc)
+    return (
+        "You have access to the following tools. When you need to use a tool, "
+        "output the tool call as a JSON code block with the format:\n"
+        "```tool_call\n"
+        '{"name": "<tool_name>", "arguments": {<key-value pairs>}}\n'
+        "```\n\n"
+        "Available tools:\n" + "\n".join(tool_descriptions)
+    )
+
+
+def _format_tool_results(tool_calls: list[ToolCall] | None, content: str, name: str | None, tool_call_id: str | None) -> str:
+    """Format a tool role message into human-readable text."""
+    parts = []
+    if name:
+        parts.append(f"Tool result from {name}")
+    elif tool_call_id:
+        parts.append(f"Tool result (id: {tool_call_id})")
+    if content:
+        parts.append(content)
+    return "\n".join(parts)
+
+
 def translate_openai_request(request: OpenAIChatRequest) -> TranslatedRequest:
     system_lines: list[str] = []
     transcript_lines: list[str] = []
     prompt = ""
 
+    # Inject tool definitions into system context
+    tools_prompt = _format_tools_prompt(request.tools)
+    if tools_prompt:
+        system_lines.append(tools_prompt)
+
     for index, message in enumerate(request.messages):
+        is_last = index == len(request.messages) - 1
+
+        # Handle tool result messages
+        if message.role == "tool":
+            text = _format_tool_results(
+                message.tool_calls,
+                flatten_content(message.content),
+                message.name,
+                message.tool_call_id,
+            )
+            transcript_lines.append(f"Tool: {text}")
+            continue
+
         text = flatten_content(message.content).strip()
+
+        # Handle assistant messages with tool_calls
+        if message.role == "assistant" and message.tool_calls:
+            tool_call_texts = []
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
+                    tool_call_texts.append(f"Assistant called tool: {tc.function.name}({json.dumps(args, ensure_ascii=False)})")
+                except (json.JSONDecodeError, TypeError):
+                    tool_call_texts.append(f"Assistant called tool: {tc.function.name}({tc.function.arguments})")
+            if text:
+                tool_call_texts.insert(0, f"Assistant: {text}")
+            transcript_lines.append("\n".join(tool_call_texts))
+            continue
+
         if not text:
             continue
-        is_last = index == len(request.messages) - 1
         if message.role in {"system", "developer"}:
             system_lines.append(text)
             continue
