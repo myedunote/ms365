@@ -211,6 +211,7 @@ M365 Copilot 支持多种模型 / 思考模式，由 Substrate 请求中的 `ton
 
 ## 预览
 
+![1782860179527](image/README/1782860179527.png)
 
 ![1782854190802](image/README/1782854190802.png)
 
