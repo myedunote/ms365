@@ -868,13 +868,13 @@ def create_app(
     # Conversation tone (mode) options discovered from M365 Copilot's mode picker.
     # The `tone` field in the Substrate chat payload controls which model/mode is used.
     _TONE_OPTIONS = [
-        {"value": "Magic", "label": "自动 / Auto"},
-        {"value": "Chat", "label": "快速答复 / Fast"},
-        {"value": "Reasoning", "label": "深度思考 / Think"},
-        {"value": "Gpt_5_5_Chat", "label": "GPT 5.5 快速响应"},
-        {"value": "Gpt_5_5_Reasoning", "label": "GPT 5.5 深度思考"},
-        {"value": "Gpt_5_2_Chat", "label": "GPT 5.2 快速响应"},
-        {"value": "Gpt_5_2_Reasoning", "label": "GPT 5.2 深度思考"},
+        {"value": "Magic", "label": "自动 / Auto", "label_zh": "自动", "label_en": "Auto"},
+        {"value": "Chat", "label": "快速答复 / Fast", "label_zh": "快速答复", "label_en": "Fast"},
+        {"value": "Reasoning", "label": "深度思考 / Think", "label_zh": "深度思考", "label_en": "Think"},
+        {"value": "Gpt_5_5_Chat", "label": "GPT 5.5 快速响应", "label_zh": "GPT 5.5 快速响应", "label_en": "GPT 5.5 Fast"},
+        {"value": "Gpt_5_5_Reasoning", "label": "GPT 5.5 深度思考", "label_zh": "GPT 5.5 深度思考", "label_en": "GPT 5.5 Think"},
+        {"value": "Gpt_5_2_Chat", "label": "GPT 5.2 快速响应", "label_zh": "GPT 5.2 快速响应", "label_en": "GPT 5.2 Fast"},
+        {"value": "Gpt_5_2_Reasoning", "label": "GPT 5.2 深度思考", "label_zh": "GPT 5.2 深度思考", "label_en": "GPT 5.2 Think"},
     ]
     _TONE_VALUES = {o["value"] for o in _TONE_OPTIONS}
 
@@ -1742,7 +1742,7 @@ function applyLang(){
     const key=el.getAttribute('data-i18n');
     if(i18n[lang][key])el.textContent=i18n[lang][key];
   });
-  loadStatus();loadChromiumStatus();
+  loadStatus();loadChromiumStatus();loadTone();
 }
 applyLang();
 
@@ -2064,11 +2064,14 @@ async function loadTone(){
     if(!sel)return;
     const cur=d.tone||'Magic';
     const opts=d.options||[];
-    // Skip re-render if unchanged (avoids resetting an open dropdown)
-    const sig=JSON.stringify(opts)+'|'+cur;
+    window.__toneOpts=opts;
+    // Skip re-render if unchanged (avoids resetting an open dropdown). Signature
+    // includes lang so switching language re-renders the localized labels.
+    const sig=JSON.stringify(opts)+'|'+cur+'|'+lang;
     if(sig===window.__toneSig)return;
     window.__toneSig=sig;
-    sel.innerHTML=opts.map(o=>'<option value="'+o.value+'"'+(o.value===cur?' selected':'')+'>'+o.label+'</option>').join('');
+    const lbl=o=>(lang==='en'?(o.label_en||o.label):(o.label_zh||o.label))||o.label;
+    sel.innerHTML=opts.map(o=>'<option value="'+o.value+'"'+(o.value===cur?' selected':'')+'>'+lbl(o)+'</option>').join('');
     sel.onchange=()=>saveTone(sel.value);
   }catch(e){}
 }
