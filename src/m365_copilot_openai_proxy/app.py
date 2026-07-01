@@ -1465,7 +1465,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;bac
 .container{max-width:720px;margin:0 auto}
 h1{font-size:1.5rem;margin-bottom:1.5rem;background:linear-gradient(135deg,#06b6d4,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .card{background:#1e293b;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;border:1px solid #334155}
-.card h2{font-size:1.1rem;margin-bottom:1rem;color:#94a3b8}
+.card h2{font-size:1.1rem;margin-bottom:1rem;color:#e2e8f0}
 .status-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid #334155}
 .status-row:last-child{border:none}
 .status-label{color:#94a3b8;font-size:.9rem}
