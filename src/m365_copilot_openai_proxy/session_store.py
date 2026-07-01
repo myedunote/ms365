@@ -114,3 +114,22 @@ class PersistentSessionStore:
                 self._sessions.move_to_end(key)
                 session.last_accessed = time.time()
             return session
+
+    def reset(self, key: str) -> PersistentSession:
+        """Discard any existing session under key and start a fresh one.
+
+        Used when the auto-detected conversation key collides (e.g. two different
+        conversations that happen to share the same first user message): a new
+        conversation's first turn must NOT reuse the previous M365 thread, or the
+        model receives stale context and hallucinates. A fresh session gets a new
+        conversation_id / client_session_id and turn_count=0.
+        """
+        with self._lock:
+            session = PersistentSession()
+            session._on_change = self._save
+            self._sessions[key] = session
+            self._sessions.move_to_end(key)
+            while len(self._sessions) > self._max_sessions:
+                self._sessions.popitem(last=False)
+            self._save()
+            return session

@@ -270,6 +270,50 @@ def _strip_tool_call_blocks(text: str) -> str:
     return cleaned.strip()
 
 
+# M365 Copilot has a native "generate a file" feature that hosts the file on its
+# own object storage (asyncgw/Teams) and returns a download URL, instead of
+# emitting our tool_call. From the model's view the task is "done", so prompt
+# rules alone can't stop it. We detect this pattern and force a corrective retry.
+_FILE_CLAIM_URL_RE = _re.compile(
+    r"https?://[^\s`)]+?\.(?:py|js|ts|tsx|jsx|json|txt|md|html?|css|sh|bat|ps1|"
+    r"java|kt|c|cpp|cc|h|cs|go|rs|rb|php|swift|ya?ml|xml|sql|ini|toml|cfg)\b",
+    _re.IGNORECASE,
+)
+# Phrases that claim a file was produced (zh + en).
+_FILE_CLAIM_PHRASE_RE = _re.compile(
+    r"已生成|已创建|已保存|已写入|已经生成|已经创建|生成脚本|生成了|创建了|保存到|"
+    r"file (?:created|saved|generated|written)|created the file|saved to|generated the",
+    _re.IGNORECASE,
+)
+
+
+def _looks_like_fake_file_claim(text: str) -> bool:
+    """True if the model claims to have produced a file but emitted no tool_call.
+
+    Two triggers:
+    1. A hosted attachment URL pointing at a code/text file (M365 native file gen).
+    2. A "file created/生成" style phrase.
+    The caller only invokes this when NO tool_call was parsed from the response.
+    """
+    if not text:
+        return False
+    if _FILE_CLAIM_URL_RE.search(text):
+        return True
+    if _FILE_CLAIM_PHRASE_RE.search(text):
+        return True
+    return False
+
+
+_RETRY_INSTRUCTION = (
+    "[SYSTEM] Your previous reply did NOT create any file on the host. "
+    "You may have used a hosted attachment link or an out-of-band file feature — that does NOT work here; "
+    "the host only creates files when you emit a tool_call block. "
+    "Re-do the task NOW: output ONLY a fenced ```tool_call block whose JSON is "
+    '{"name": "Write", "arguments": {"file_path": "<the exact path the user gave>", "content": "<the FULL file body>"}}. '
+    "No prose, no links, no usage examples — just the tool_call block with the complete file content.[/SYSTEM]"
+)
+
+
 def _update_username_from_token(token: str, state) -> None:
     """Extract username from JWT claims and persist it if not already set."""
     if getattr(state, 'username', None) and len(state.username) > 1:
@@ -1006,6 +1050,23 @@ def create_app(
             tool_calls = _extract_prose_write(text, tool_names)
             if tool_calls:
                 _log.info("  prose fallback synthesized Write tool_call")
+        # Corrective retry: M365 sometimes "creates" a file via its native
+        # attachment feature (hosted URL) instead of a tool_call. If it claims a
+        # file but emitted none, force one retry demanding a real tool_call.
+        if not tool_calls and request.tools and _looks_like_fake_file_claim(text):
+            _log.info("  fake file claim detected, forcing corrective retry")
+            try:
+                retry_text = await client.chat(_RETRY_INSTRUCTION, translated.additional_context, session)
+                retry_calls = _extract_tool_calls(retry_text)
+                if not retry_calls:
+                    tool_names = {t.function.name for t in request.tools if t.function}
+                    retry_calls = _extract_prose_write(retry_text, tool_names)
+                if retry_calls:
+                    _log.info("  retry produced %d tool_call(s)", len(retry_calls))
+                    text, tool_calls = retry_text, retry_calls
+                    call_record["retried"] = True
+            except SubstrateCopilotError:
+                pass  # Keep original response if retry fails
         _log.info("[/v1/chat/completions] response len=%d tool_calls=%d", len(text), len(tool_calls))
         if tool_calls:
             _log.info("  parsed tool_calls: %s", [tc["function"]["name"] for tc in tool_calls])
@@ -1145,6 +1206,14 @@ def _persistent_session(
     # different first user message -> different session key -> new M365 session.
     if request is not None:
         sid, _title = _detect_conversation_session(request)
+        # A conversation's opening turn carries no assistant reply yet. If two
+        # different conversations happen to share the same first user message
+        # (e.g. the same prompt reused to start a new chat), their auto key
+        # collides. Reusing the stale M365 thread would feed the model wrong
+        # context and make it hallucinate. So on an opening turn, start fresh.
+        has_assistant = any(m.role == "assistant" for m in request.messages)
+        if not has_assistant:
+            return app.state.session_store.reset(f"auto:{sid}")
         return app.state.session_store.get(f"auto:{sid}")
     return None
 
@@ -1214,6 +1283,24 @@ async def _openai_stream_with_tools(
         tool_calls = _extract_prose_write(full_text, tool_names)
         if tool_calls:
             _log.info("  prose fallback synthesized Write tool_call")
+    # Corrective retry: M365 native file-gen (hosted URL) instead of a tool_call.
+    if not tool_calls and tool_names and _looks_like_fake_file_claim(full_text):
+        _log.info("  fake file claim detected, forcing corrective retry")
+        try:
+            retry_chunks: list[str] = []
+            async for delta in client.chat_stream(_RETRY_INSTRUCTION, additional_context, session):
+                retry_chunks.append(delta)
+            retry_text = "".join(retry_chunks)
+            retry_calls = _extract_tool_calls(retry_text)
+            if not retry_calls:
+                retry_calls = _extract_prose_write(retry_text, tool_names)
+            if retry_calls:
+                _log.info("  retry produced %d tool_call(s)", len(retry_calls))
+                full_text, tool_calls = retry_text, retry_calls
+                if call_record is not None:
+                    call_record["retried"] = True
+        except SubstrateCopilotError:
+            pass  # Keep original response if retry fails
     _log.info("[stream_with_tools] full_text len=%d tool_calls=%d", len(full_text), len(tool_calls))
     if tool_calls:
         _log.info("  parsed tool_calls: %s", [tc["function"]["name"] for tc in tool_calls])
