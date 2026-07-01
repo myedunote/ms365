@@ -83,7 +83,7 @@ class SubstrateCopilotError(RuntimeError):
 
 
 class SubstrateCopilotClient:
-    def __init__(self, access_token: str, time_zone: str = "Asia/Shanghai", tone: str = "Magic"):
+    def __init__(self, access_token: str, time_zone: str = "Asia/Shanghai", tone: str = "Magic", extra_tool_prompt: str = ""):
         if not access_token:
             raise SubstrateCopilotError(
                 "M365_ACCESS_TOKEN is missing. Start the debug Edge window and let startup token capture complete, "
@@ -92,6 +92,7 @@ class SubstrateCopilotClient:
         self._token = access_token
         self._time_zone = time_zone
         self._tone = tone or "Magic"
+        self._extra_tool_prompt = extra_tool_prompt or ""
         try:
             claims = decode_jwt_payload(access_token)
         except Exception as exc:
@@ -144,6 +145,8 @@ class SubstrateCopilotClient:
                 "- Say 'file saved' or '已生成' without actually emitting the tool_call block\n"
                 "You MUST emit the tool_call block immediately. No other format is accepted.[/INSTRUCTION]\n\n"
             )
+            if self._extra_tool_prompt.strip():
+                tool_reminder += "[CUSTOM INSTRUCTION] " + self._extra_tool_prompt.strip() + " [/CUSTOM INSTRUCTION]\n\n"
         payload = {
             "arguments": [{
                 "source": "officeweb",

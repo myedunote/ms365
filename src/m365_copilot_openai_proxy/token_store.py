@@ -174,6 +174,36 @@ def read_tone() -> str:
         return ""
 
 
+def write_tool_prompt(prompt: str) -> None:
+    """Persist a user-defined extra tool-call instruction across restarts."""
+    token_dir = _get_token_dir()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    (token_dir / "tool_prompt").write_text(prompt or "", encoding="utf-8")
+
+
+def read_tool_prompt() -> str:
+    """Read the persisted user-defined extra tool-call instruction."""
+    try:
+        return (_get_token_dir() / "tool_prompt").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def write_system_prompt(prompt: str) -> None:
+    """Persist a user-defined system-level tool-call instruction override across restarts."""
+    token_dir = _get_token_dir()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    (token_dir / "system_prompt").write_text(prompt or "", encoding="utf-8")
+
+
+def read_system_prompt() -> str:
+    """Read the persisted system-level tool-call instruction override (empty = use default)."""
+    try:
+        return (_get_token_dir() / "system_prompt").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
 def _read_env_token(path: Path) -> str | None:
     try:
         text = path.read_text(encoding="utf-8")

@@ -18,9 +18,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from .config import Settings
 from .session_store import PersistentSession, PersistentSessionStore
 from .substrate_client import SubstrateCopilotClient, SubstrateCopilotError
-from .token_store import AccessTokenStore, write_token, write_username, read_username, decode_jwt_payload, init_token_dir, write_tone, read_tone
+from .token_store import AccessTokenStore, write_token, write_username, read_username, decode_jwt_payload, init_token_dir, write_tone, read_tone, write_tool_prompt, read_tool_prompt, write_system_prompt, read_system_prompt
 from .models import AnthropicMessagesRequest, OpenAIChatRequest, OpenAIResponsesRequest
-from .translator import translate_anthropic_request, translate_openai_request, translate_responses_request, flatten_content
+from .translator import translate_anthropic_request, translate_openai_request, translate_responses_request, flatten_content, default_tool_system_prompt
 
 _PERSIST_MODEL_SUFFIX = ":persist"
 _SESSION_ID_HEADER = "x-m365-session-id"
@@ -308,6 +308,8 @@ def create_app(
     app.state.idle_timeout_minutes = resolved_settings.idle_timeout_minutes
     app.state.username = read_username()  # Restore persisted username (set via get_token.js push or CDP extraction)
     app.state.current_tone = read_tone() or "Magic"  # Restore persisted conversation tone (mode), default "Magic" (Auto)
+    app.state.tool_prompt = read_tool_prompt()  # Restore persisted user-defined extra tool-call instruction
+    app.state.system_prompt = read_system_prompt()  # Restore persisted system-level tool-call instruction override (empty = use default)
     if not resolved_settings.api_key:
         print("WARNING: API_KEY is not set. All /v1/ API endpoints are open without authentication. Set API_KEY in .env to secure your instance.")
     _admin_secret = resolved_settings.admin_password or resolved_settings.api_key
@@ -323,7 +325,7 @@ def create_app(
     _LOGIN_LOCKOUT_SEC = 60.0   # lockout duration
 
     app.state.copilot_client_factory = copilot_client_factory or (
-        lambda: SubstrateCopilotClient(app.state.token_store.get(), resolved_settings.time_zone, getattr(app.state, 'current_tone', 'Magic'))
+        lambda: SubstrateCopilotClient(app.state.token_store.get(), resolved_settings.time_zone, getattr(app.state, 'current_tone', 'Magic'), getattr(app.state, 'tool_prompt', ''))
     )
 
     def _is_admin_authenticated(request: Request) -> bool:
@@ -408,7 +410,7 @@ def create_app(
         if not resolved_settings.api_key:
             return await call_next(request)
         # Skip auth for admin page (has its own cookie check) and health endpoints
-        if path in ("/", "/favicon.ico", "/healthz", "/admin/login", "/admin/token/status", "/admin/token/update", "/admin/token/auto-capture", "/admin/token/auto-refresh-toggle", "/admin/cookie/inject", "/admin/chromium/login-status", "/admin/chromium/logout", "/admin/call-log", "/admin/capture-payload", "/admin/tone"):
+        if path in ("/", "/favicon.ico", "/healthz", "/admin/login", "/admin/token/status", "/admin/token/update", "/admin/token/auto-capture", "/admin/token/auto-refresh-toggle", "/admin/cookie/inject", "/admin/chromium/login-status", "/admin/chromium/logout", "/admin/call-log", "/admin/capture-payload", "/admin/tone", "/admin/tool-prompt", "/admin/system-prompt"):
             return await call_next(request)
         auth = request.headers.get("Authorization", "")
         match = re.match(r"^Bearer\s+(.+)$", auth, re.IGNORECASE)
@@ -850,6 +852,48 @@ def create_app(
         write_tone(tone)
         return {"status": "ok", "tone": tone}
 
+    @app.get("/admin/tool-prompt")
+    async def get_tool_prompt(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
+        return {"tool_prompt": getattr(app.state, 'tool_prompt', '')}
+
+    @app.post("/admin/tool-prompt")
+    async def set_tool_prompt(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
+        body = await request.json()
+        prompt = body.get("tool_prompt")
+        if not isinstance(prompt, str):
+            return _json_err(400, "tool_prompt must be a string")
+        prompt = prompt[:4000]  # cap length to avoid bloating every request
+        app.state.tool_prompt = prompt
+        write_tool_prompt(prompt)
+        return {"status": "ok", "tool_prompt": prompt}
+
+    @app.get("/admin/system-prompt")
+    async def get_system_prompt(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
+        # Return the saved override plus the built-in default (for restore/initial fill).
+        return {
+            "system_prompt": getattr(app.state, 'system_prompt', ''),
+            "default": default_tool_system_prompt(),
+        }
+
+    @app.post("/admin/system-prompt")
+    async def set_system_prompt(request: Request) -> dict:
+        err = _require_admin(request)
+        if err: return err
+        body = await request.json()
+        prompt = body.get("system_prompt")
+        if not isinstance(prompt, str):
+            return _json_err(400, "system_prompt must be a string")
+        prompt = prompt[:8000]  # cap length to avoid bloating every request
+        app.state.system_prompt = prompt
+        write_system_prompt(prompt)
+        return {"status": "ok", "system_prompt": prompt}
+
     @app.get("/", response_class=HTMLResponse)
     async def admin_page(request: Request) -> str:
         if _admin_secret and not _is_admin_authenticated(request):
@@ -916,7 +960,7 @@ def create_app(
             # incremental optimization actually kicks in across turns.
             call_record["incremental"] = incremental
             call_record["turn_count"] = session.turn_count if session is not None else None
-            translated = translate_openai_request(request, incremental=incremental)
+            translated = translate_openai_request(request, incremental=incremental, system_override=getattr(app.state, 'system_prompt', ''))
             if request.stream:
                 # Save call record for streaming (tool_calls_result resolved later)
                 call_record["streaming"] = True
@@ -1387,35 +1431,30 @@ a:hover{text-decoration:underline}
 </div>
 
 <div class="card">
-<h2 data-i18n="title_quick_start">快速开始</h2>
-<p style="color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:.75rem">
-<strong style="color:#22c55e" data-i18n="qs_recommended">推荐：</strong><span data-i18n="qs_install_script">安装油猴脚本（</span><a href="https://gh-proxy.com/https://raw.githubusercontent.com/MurasameCyan/Ciallo-Ms-365-OpenAI-Proxy-Docker/main/get_token.user.js" target="_blank" data-i18n="qs_script_name">一键脚本</a>），<span data-i18n="qs_open_copilot">打开</span> <a href="https://m365.cloud.microsoft/chat" target="_blank">M365 Copilot</a>，<span data-i18n="qs_type_trigger">输入内容触发 WebSocket，然后在脚本面板点击</span> <strong data-i18n="qs_push_token">推送 Token</strong>。<br>
-<strong style="color:#f59e0b" data-i18n="qs_alternative">备选：</strong><span data-i18n="qs_manual_copy">在 DevTools（Network → WS → wss://substrate.office.com/...）中手动复制 </span><code>access_token</code>，<span data-i18n="qs_paste_above">然后粘贴到上方。</span>
-</p>
-<details style="cursor:pointer">
-<summary style="font-weight:600;color:#e2e8f0;list-style:none;display:flex;align-items:center;gap:.5rem">
-<span data-i18n="title_api_endpoints">API 端点</span>
-<span style="font-size:.7rem;color:#475569;margin-left:auto" data-i18n="click_expand">点击展开</span>
-</summary>
-<div class="api-info" style="margin-top:.5rem">
-GET  /healthz<br>
-GET  /admin/token/status<br>
-POST /admin/token/update<br>
-POST /admin/token/auto-capture<br>
-POST /admin/cookie/inject<br>
-GET  /admin/chromium/login-status<br>
-POST /admin/chromium/logout<br>
-GET  /admin/call-log<br>
-GET  /admin/capture-payload<br>
-POST /admin/capture-payload<br>
-GET  /admin/tone<br>
-POST /admin/tone<br>
-GET  /v1/models<br>
-POST /v1/chat/completions<br>
-POST /v1/responses<br>
-POST /v1/messages
+<h2 data-i18n="title_tool_prompt">工具调用附加指令</h2>
+<div style="font-size:.8rem;color:#64748b;margin-bottom:.5rem" data-i18n="tool_prompt_hint">追加到工具调用提示词后的自定义指令，用于调教模型的 tool_call 行为。立即生效并持久保存，留空则不追加。</div>
+<textarea id="tool-prompt-input" rows="4" style="width:100%;box-sizing:border-box;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:.85rem;font-family:monospace;outline:none;resize:vertical" placeholder=""></textarea>
+<div style="display:flex;align-items:center;gap:.5rem;margin-top:.5rem">
+<button id="tool-prompt-save" onclick="saveToolPrompt()" data-i18n="tool_prompt_save">保存</button>
+<button id="tool-prompt-reset" onclick="resetToolPrompt()" style="background:linear-gradient(135deg,#64748b,#475569)" data-i18n="prompt_reset">恢复默认</button>
+<span id="tool-prompt-saved" style="font-size:.75rem;color:#22c55e;opacity:0;transition:opacity .3s"></span>
 </div>
-</details>
+</div>
+
+<div class="card">
+<h2 data-i18n="title_system_prompt">系统级提示词（高级）</h2>
+<div style="font-size:.8rem;color:#64748b;margin-bottom:.5rem" data-i18n="system_prompt_hint">覆盖工具调用的基础系统提示词（定义 tool_call 格式与规则）。改错会导致工具调用失效，仅供高级用户调试。动态工具列表始终自动追加，不可编辑。留空则使用内置默认。</div>
+<div id="system-prompt-locked">
+<button id="system-prompt-unlock" onclick="unlockSystemPrompt()" style="background:linear-gradient(135deg,#ef4444,#dc2626)" data-i18n="system_prompt_unlock">解锁编辑（高级）</button>
+</div>
+<div id="system-prompt-editor" style="display:none">
+<textarea id="system-prompt-input" rows="10" style="width:100%;box-sizing:border-box;padding:8px 12px;background:#0f172a;border:1px solid #7f1d1d;border-radius:8px;color:#e2e8f0;font-size:.8rem;font-family:monospace;outline:none;resize:vertical" placeholder=""></textarea>
+<div style="display:flex;align-items:center;gap:.5rem;margin-top:.5rem">
+<button id="system-prompt-save" onclick="saveSystemPrompt()" data-i18n="system_prompt_save">保存</button>
+<button id="system-prompt-reset" onclick="resetSystemPrompt()" style="background:linear-gradient(135deg,#64748b,#475569)" data-i18n="prompt_reset">恢复默认</button>
+<span id="system-prompt-saved" style="font-size:.75rem;color:#22c55e;opacity:0;transition:opacity .3s"></span>
+</div>
+</div>
 </div>
 
 <div class="card">
@@ -1441,6 +1480,42 @@ POST /v1/messages
 <div style="margin-top:.5rem;font-size:.75rem;color:#64748b" data-i18n="capture_hint">在 M365 Copilot 切换不同模式（快速答复/深度思考、GPT 5.5/5.2）各发一条消息，用油猴脚本推送抓包，下方对比哪些字段控制模式。</div>
 <div id="capture-content" style="margin-top:.75rem;max-height:400px;overflow-y:auto;font-family:monospace;font-size:.78rem">
 <span style="color:#64748b" data-i18n="no_capture_yet">暂无抓包数据</span>
+</div>
+</details>
+</div>
+
+<div class="card">
+<h2 data-i18n="title_quick_start">快速开始</h2>
+<p style="color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:.75rem">
+<strong style="color:#22c55e" data-i18n="qs_recommended">推荐：</strong><span data-i18n="qs_install_script">安装油猴脚本（</span><a href="https://gh-proxy.com/https://raw.githubusercontent.com/MurasameCyan/Ciallo-Ms-365-OpenAI-Proxy-Docker/main/get_token.user.js" target="_blank" data-i18n="qs_script_name">一键脚本</a>），<span data-i18n="qs_open_copilot">打开</span> <a href="https://m365.cloud.microsoft/chat" target="_blank">M365 Copilot</a>，<span data-i18n="qs_type_trigger">输入内容触发 WebSocket，然后在脚本面板点击</span> <strong data-i18n="qs_push_token">推送 Token</strong>。<br>
+<strong style="color:#f59e0b" data-i18n="qs_alternative">备选：</strong><span data-i18n="qs_manual_copy">在 DevTools（Network → WS → wss://substrate.office.com/...）中手动复制 </span><code>access_token</code>，<span data-i18n="qs_paste_above">然后粘贴到上方。</span>
+</p>
+<details style="cursor:pointer">
+<summary style="font-weight:600;color:#e2e8f0;list-style:none;display:flex;align-items:center;gap:.5rem">
+<span data-i18n="title_api_endpoints">API 端点</span>
+<span style="font-size:.7rem;color:#475569;margin-left:auto" data-i18n="click_expand">点击展开</span>
+</summary>
+<div class="api-info" style="margin-top:.5rem">
+GET  /healthz<br>
+GET  /admin/token/status<br>
+POST /admin/token/update<br>
+POST /admin/token/auto-capture<br>
+POST /admin/cookie/inject<br>
+GET  /admin/chromium/login-status<br>
+POST /admin/chromium/logout<br>
+GET  /admin/call-log<br>
+GET  /admin/capture-payload<br>
+POST /admin/capture-payload<br>
+GET  /admin/tone<br>
+POST /admin/tone<br>
+GET  /admin/tool-prompt<br>
+POST /admin/tool-prompt<br>
+GET  /admin/system-prompt<br>
+POST /admin/system-prompt<br>
+GET  /v1/models<br>
+POST /v1/chat/completions<br>
+POST /v1/responses<br>
+POST /v1/messages
 </div>
 </details>
 </div>
@@ -1481,6 +1556,17 @@ const i18n={
     title_tone:'对话模式',
     tone_hint:'选择 M365 Copilot 的对话模式（模型），立即生效并持久保存。',
     tone_saved:'已保存',
+    title_tool_prompt:'工具调用附加指令',
+    tool_prompt_hint:'追加到工具调用提示词后的自定义指令，用于调教模型的 tool_call 行为。立即生效并持久保存，留空则不追加。',
+    tool_prompt_save:'保存',
+    tool_prompt_saved:'已保存',
+    prompt_reset:'恢复默认',
+    title_system_prompt:'系统级提示词（高级）',
+    system_prompt_hint:'覆盖工具调用的基础系统提示词（定义 tool_call 格式与规则）。改错会导致工具调用失效，仅供高级用户调试。动态工具列表始终自动追加，不可编辑。留空则使用内置默认。',
+    system_prompt_unlock:'解锁编辑（高级）',
+    system_prompt_save:'保存',
+    system_prompt_warn:'警告：系统级提示词定义了工具调用（tool_call）的格式与核心规则。修改不当会直接导致工具调用失效、模型无法读写文件。仅在你清楚自己在做什么时继续。\n\n确定要解锁编辑吗？',
+    system_prompt_reset_confirm:'确定要将系统级提示词恢复为内置默认吗？当前自定义内容将被清空。',
   },
   en:{
     title_update_token:'Update Token',btn_update:'Update Token',btn_check_login:'Check Login',btn_auto_capture:'Auto Capture',
@@ -1516,6 +1602,17 @@ const i18n={
     title_tone:'Conversation Mode',
     tone_hint:'Select the M365 Copilot conversation mode (model). Applies immediately and persists across restarts.',
     tone_saved:'Saved',
+    title_tool_prompt:'Extra Tool-Call Instruction',
+    tool_prompt_hint:'Custom instruction appended after the tool-call prompt to tune the tool_call behavior of the model. Applies immediately and persists across restarts; leave empty to append nothing.',
+    tool_prompt_save:'Save',
+    tool_prompt_saved:'Saved',
+    prompt_reset:'Restore default',
+    title_system_prompt:'System Prompt (Advanced)',
+    system_prompt_hint:'Overrides the base system prompt for tool calls (defines the tool_call format and rules). A wrong edit will break tool calling. For advanced debugging only. The dynamic tool list is always appended and is not editable. Leave empty to use the built-in default.',
+    system_prompt_unlock:'Unlock editing (Advanced)',
+    system_prompt_save:'Save',
+    system_prompt_warn:'WARNING: the system prompt defines the format and core rules of tool calls (tool_call). An incorrect edit will break tool calling and the model will be unable to read/write files. Continue only if you know what you are doing.\\n\\nUnlock editing?',
+    system_prompt_reset_confirm:'Restore the system prompt to the built-in default? Your current custom content will be cleared.',
   }
 };
 let lang=localStorage.getItem('lang')||'zh';
@@ -1744,6 +1841,8 @@ loadChromiumStatus();
 loadCallLog();
 loadCapture();
 loadTone();
+loadToolPrompt();
+loadSystemPrompt();
 setInterval(loadStatus,60000);
 setInterval(loadChromiumStatus,60000);
 setInterval(loadCallLog,5000);
@@ -1882,6 +1981,76 @@ async function saveTone(tone){
     if(s){s.textContent=t('tone_saved');s.style.opacity='1';setTimeout(()=>{s.style.opacity='0'},1500)}
   }catch(e){}
 }
+async function loadToolPrompt(){
+  try{
+    const r=await fetch('/admin/tool-prompt',{credentials:'include'});
+    if(r.status===401){return}
+    const d=await r.json();
+    const ta=document.getElementById('tool-prompt-input');
+    if(!ta)return;
+    if(document.activeElement!==ta)ta.value=d.tool_prompt||'';
+  }catch(e){}
+}
+async function saveToolPrompt(){
+  try{
+    const ta=document.getElementById('tool-prompt-input');
+    if(!ta)return;
+    const r=await fetch('/admin/tool-prompt',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_prompt:ta.value})});
+    if(!r.ok)return;
+    const s=document.getElementById('tool-prompt-saved');
+    if(s){s.textContent=t('tool_prompt_saved');s.style.opacity='1';setTimeout(()=>{s.style.opacity='0'},1500)}
+  }catch(e){}
+}
+async function resetToolPrompt(){
+  // Extra instruction default is empty.
+  const ta=document.getElementById('tool-prompt-input');
+  if(ta)ta.value='';
+  await saveToolPrompt();
+}
+
+let __systemPromptDefault='';
+async function loadSystemPrompt(){
+  try{
+    const r=await fetch('/admin/system-prompt',{credentials:'include'});
+    if(r.status===401){return}
+    const d=await r.json();
+    __systemPromptDefault=d.default||'';
+    const ta=document.getElementById('system-prompt-input');
+    if(!ta)return;
+    // Show the saved override, or fall back to the default text for reference.
+    if(document.activeElement!==ta)ta.value=(d.system_prompt&&d.system_prompt.length)?d.system_prompt:__systemPromptDefault;
+  }catch(e){}
+}
+function unlockSystemPrompt(){
+  if(!confirm(t('system_prompt_warn')))return;
+  const locked=document.getElementById('system-prompt-locked');
+  const editor=document.getElementById('system-prompt-editor');
+  if(locked)locked.style.display='none';
+  if(editor)editor.style.display='block';
+}
+async function saveSystemPrompt(){
+  try{
+    const ta=document.getElementById('system-prompt-input');
+    if(!ta)return;
+    const r=await fetch('/admin/system-prompt',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({system_prompt:ta.value})});
+    if(!r.ok)return;
+    const s=document.getElementById('system-prompt-saved');
+    if(s){s.textContent=t('tool_prompt_saved');s.style.opacity='1';setTimeout(()=>{s.style.opacity='0'},1500)}
+  }catch(e){}
+}
+async function resetSystemPrompt(){
+  if(!confirm(t('system_prompt_reset_confirm')))return;
+  const ta=document.getElementById('system-prompt-input');
+  // Saving an empty override makes the backend fall back to the built-in default.
+  if(ta)ta.value=__systemPromptDefault;
+  try{
+    const r=await fetch('/admin/system-prompt',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({system_prompt:''})});
+    if(!r.ok)return;
+    const s=document.getElementById('system-prompt-saved');
+    if(s){s.textContent=t('tool_prompt_saved');s.style.opacity='1';setTimeout(()=>{s.style.opacity='0'},1500)}
+  }catch(e){}
+}
+
 </script>
 </body>
 </html>"""

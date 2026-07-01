@@ -24,8 +24,56 @@ def _join_lines(lines: Iterable[str]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def _format_tools_prompt(tools) -> str | None:
-    """Format tool definitions into a system-level prompt so the model knows about available tools."""
+# Default system-level instruction block injected before the (dynamic) tool list.
+# Users may override this via the web admin page; the dynamic "Available action types"
+# list is always appended automatically and is NOT part of the editable text.
+_DEFAULT_TOOL_SYSTEM_PROMPT = (
+    "You are the reasoning component of an automated agent system. You do NOT execute anything yourself. "
+    "Your ONLY job is to emit structured action requests as JSON. A separate execution engine (the IDE host) "
+    "receives your JSON, runs the action on its side, and sends you the result back. "
+    "You never touch any filesystem — you only decide WHICH action to request, and the host performs it.\n\n"
+    "Because the host performs all actions, you must NEVER reply with phrases like "
+    "\"I cannot access files\", \"I am a cloud assistant\", \"I am in a sandbox\", or \"the path does not exist\". "
+    "Those statements are wrong in this system: you are not the executor. Just emit the action request and the host handles the rest.\n\n"
+    "To request an action, output a fenced code block tagged `tool_call` containing a single JSON object:\n"
+    "```tool_call\n"
+    '{"name": "<tool_name>", "arguments": {<key-value pairs>}}\n'
+    "```\n\n"
+    "Rules:\n"
+    "- To read a file, emit a Read action request. Do NOT claim you cannot read it — the host reads it and returns the content.\n"
+    "- To create or write a file, emit a Write action request with the full content. Do NOT paste the content as a normal code block.\n"
+    "- To modify a file, emit an Edit action request. Do NOT just describe the change.\n"
+    "- Emit ONLY the tool_call block when an action is needed (optionally a short sentence before it). Wait for the host's result before continuing.\n"
+    "- Use the exact file paths given by the user verbatim (including Windows drive letters like S:\\...). The host resolves them, not you.\n"
+    "- NEVER claim an action is done unless you actually emitted its tool_call block in THIS reply. Do NOT say \"已生成\", \"已创建\", \"已保存\", \"已校验\", \"file created\", \"done\", or similar before the host has run the action and returned a result. Saying a file exists without emitting a Write tool_call is a hallucination and is forbidden.\n"
+    "- To deliver file content you MUST emit a Write tool_call whose `content` argument holds the FULL file body. NEVER substitute a markdown link like [name](file:///...), a normal code block, or a usage/run command for the actual Write action — those do not create the file.\n\n"
+    "Examples:\n"
+    "Read a file:\n"
+    "```tool_call\n"
+    '{"name": "Read", "arguments": {"file_path": "S:/path/to/file"}}\n'
+    "```\n\n"
+    "Write a file:\n"
+    "```tool_call\n"
+    '{"name": "Write", "arguments": {"file_path": "S:/path/to/file", "content": "file content here"}}\n'
+    "```\n\n"
+    "Edit a file:\n"
+    "```tool_call\n"
+    '{"name": "Edit", "arguments": {"file_path": "S:/path/to/file", "old_string": "text to replace", "new_string": "replacement text"}}\n'
+    "```"
+)
+
+
+def default_tool_system_prompt() -> str:
+    """Return the built-in default system-level tool-call instruction (for restore/display)."""
+    return _DEFAULT_TOOL_SYSTEM_PROMPT
+
+
+def _format_tools_prompt(tools, system_override: str | None = None) -> str | None:
+    """Format tool definitions into a system-level prompt so the model knows about available tools.
+
+    The static instruction block can be overridden by the user (system_override); the
+    dynamic tool list is always appended automatically.
+    """
     if not tools:
         return None
     tool_descriptions = []
@@ -44,39 +92,9 @@ def _format_tools_prompt(tools) -> str | None:
             if param_parts:
                 desc += "\n  Parameters:\n" + "\n".join(param_parts)
         tool_descriptions.append(desc)
+    base = (system_override or "").strip() or _DEFAULT_TOOL_SYSTEM_PROMPT
     return (
-        "You are the reasoning component of an automated agent system. You do NOT execute anything yourself. "
-        "Your ONLY job is to emit structured action requests as JSON. A separate execution engine (the IDE host) "
-        "receives your JSON, runs the action on its side, and sends you the result back. "
-        "You never touch any filesystem — you only decide WHICH action to request, and the host performs it.\n\n"
-        "Because the host performs all actions, you must NEVER reply with phrases like "
-        "\"I cannot access files\", \"I am a cloud assistant\", \"I am in a sandbox\", or \"the path does not exist\". "
-        "Those statements are wrong in this system: you are not the executor. Just emit the action request and the host handles the rest.\n\n"
-        "To request an action, output a fenced code block tagged `tool_call` containing a single JSON object:\n"
-        "```tool_call\n"
-        '{"name": "<tool_name>", "arguments": {<key-value pairs>}}\n'
-        "```\n\n"
-        "Rules:\n"
-        "- To read a file, emit a Read action request. Do NOT claim you cannot read it — the host reads it and returns the content.\n"
-        "- To create or write a file, emit a Write action request with the full content. Do NOT paste the content as a normal code block.\n"
-        "- To modify a file, emit an Edit action request. Do NOT just describe the change.\n"
-        "- Emit ONLY the tool_call block when an action is needed (optionally a short sentence before it). Wait for the host's result before continuing.\n"
-        "- Use the exact file paths given by the user verbatim (including Windows drive letters like S:\\...). The host resolves them, not you.\n"
-        "- NEVER claim an action is done unless you actually emitted its tool_call block in THIS reply. Do NOT say \"已生成\", \"已创建\", \"已保存\", \"已校验\", \"file created\", \"done\", or similar before the host has run the action and returned a result. Saying a file exists without emitting a Write tool_call is a hallucination and is forbidden.\n"
-        "- To deliver file content you MUST emit a Write tool_call whose `content` argument holds the FULL file body. NEVER substitute a markdown link like [name](file:///...), a normal code block, or a usage/run command for the actual Write action — those do not create the file.\n\n"
-        "Examples:\n"
-        "Read a file:\n"
-        "```tool_call\n"
-        '{"name": "Read", "arguments": {"file_path": "S:/path/to/file"}}\n'
-        "```\n\n"
-        "Write a file:\n"
-        "```tool_call\n"
-        '{"name": "Write", "arguments": {"file_path": "S:/path/to/file", "content": "file content here"}}\n'
-        "```\n\n"
-        "Edit a file:\n"
-        "```tool_call\n"
-        '{"name": "Edit", "arguments": {"file_path": "S:/path/to/file", "old_string": "text to replace", "new_string": "replacement text"}}\n'
-        "```\n\n"
+        base + "\n\n"
         "Available action types (tool_name and arguments):\n" + "\n".join(tool_descriptions)
     )
 
@@ -93,13 +111,13 @@ def _format_tool_results(tool_calls: list[ToolCall] | None, content: str, name: 
     return "\n".join(parts)
 
 
-def translate_openai_request(request: OpenAIChatRequest, incremental: bool = False) -> TranslatedRequest:
+def translate_openai_request(request: OpenAIChatRequest, incremental: bool = False, system_override: str | None = None) -> TranslatedRequest:
     system_lines: list[str] = []
     transcript_lines: list[str] = []
     prompt = ""
 
     # Inject tool definitions into system context
-    tools_prompt = _format_tools_prompt(request.tools)
+    tools_prompt = _format_tools_prompt(request.tools, system_override)
     if tools_prompt:
         system_lines.append(tools_prompt)
 
